@@ -1,0 +1,118 @@
+#####################
+# BASIC CONFIGURATION
+#####################
+
+# source hosting (remote server)
+src_site_protocol="http://"
+src_site_host="www.site.com"
+src_site_slug=""
+src_files_root="/home/site/www"; # absolute path for rsync, chrooted path for lftp
+
+# destination hosting (local server)
+dst_site_protocol="http://"
+dst_site_host="local.site.com"
+dst_site_slug=""
+dst_files_root="$HOME/htdocs"
+
+# RSYNC/FTP connection to source hosting (remote server)
+src_server="$src_site_host"
+src_user="username"
+src_port="2222" # 22 for rsync, 21 for lftp
+
+# source hosting (remote server)
+src_dbhostname="localhost" # optional, default behavior is to use ~/.my.cnf
+src_dbport="" # optional
+src_dbname="" # optional, default behavior is to use ~/.my.cnf
+src_dbuser="" # optional, default behavior is to use ~/.my.cnf
+src_dbpass="" # optional, default behavior is to use ~/.my.cnf
+
+# destination hosting (local server)
+dst_dbhostname="localhost" # "127.0.0.1" sometimes, optional, default behavior is to use ~/.my.cnf
+dst_dbport="" # optional
+dst_dbname=""
+dst_dbuser="" # optional, default behavior is to use ~/.my.cnf
+dst_dbpass="" # optional, default behavior is to use ~/.my.cnf
+
+# copy source files into destination
+sync_src+=("$src_files_root")
+sync_dst+=("$dst_files_root")
+
+########################
+# ADVANCED CONFIGURATION
+########################
+
+# replace source URL with remote one in database
+replace_src+=("${src_site_protocol}www.${src_site_host}${src_site_slug}")
+replace_dst+=("${dst_site_protocol}www.${dst_site_host}${dst_site_slug}")
+
+replace_src+=("${src_site_protocol}${src_site_host}${src_site_slug}")
+replace_dst+=("${dst_site_protocol}${dst_site_host}${dst_site_slug}")
+
+# Uncomment for servers not using utf8mb4
+# replace_src+=("utf8mb4_unicode_ci")
+# replace_dst+=("utf8_unicode_ci")
+
+# replace_src+=("CHARSET=utf8mb4")
+# replace_dst+=("CHARSET=utf8")
+
+# replace source PATH with remote one in database
+replace_src+=("$src_files_root")
+replace_dst+=("$dst_files_root")
+
+# chercher-remplacer : procédures stockées (requiert de bien remplir les variables $src_dbuser, $src_dbhostname, $dst_dbuser et $dst_dbhostname)
+# sur certains hébergements, le chercher-remplacer marchera avec 'localhost' mais pas avec '127.0.0.1'
+replace_src+=(" DEFINER=\`$src_dbuser\`@\`$src_dbhostname\`")
+replace_dst+=(" DEFINER=\`$dst_dbuser\`@\`$dst_dbhostname\`")
+
+# replace source HOSTNAME with remote one in database
+replace_src+=("www.$src_site_host")
+replace_dst+=("www.$dst_site_host")
+
+replace_src+=("$src_site_host")
+replace_dst+=("$dst_site_host")
+
+# sync options
+resilient_replace_options=""            # additionnal options for resilient_replace
+transport_type="rsync"                  # sync files with: rsync | lftp (if lftp, please provide lftp_pass value in "lftp options" section)
+src_type="remote_base"                  # get database from: local_file | local_base | remote_file | remote_base
+src_file="/path/to/dbname.sql.gz"       # if $src_type is a file ("local_file" or "remote_file") please provide the full path to the file
+compress=1                              # if $src_type is "local_base" or "remote_base", compress data on-the-fly
+                                        # if $src_type is "local_file" or "remote_file", handle compressed file (.gz and .7z are supported)
+# ignore database tables
+sql_ignores="--ignore-table=$src_dbname.table_a_ignorer_1 --ignore-table=$src_dbname.table_a_ignorer_2"
+
+# mysqldump options
+sql_options_structure="--default-character-set=utf8 "
+sql_options="$sql_options_structure --routines --skip-triggers "
+
+# transfer options, directories to ignore...
+exclude_dirs="--exclude /sitesync/ --exclude /stats/ --exclude .git/ --exclude .svn/ --exclude .cvs/ --exclude .DS_Store "
+
+# rsync options
+rsync_options="-urpztl --chmod=u+rwX,go+rX,go-w $exclude_dirs "
+
+# lftp options
+lftp_pass=""
+lftp_src_port="$src_port"
+lftp_connect_options="set ftp:ssl-allow no; "
+lftp_mirror_command_options="--parallel=16 --verbose --only-newer"
+
+# niceness options
+remote_nice="ionice -c3 nice " # be nice with IO and CPU, may be empty if you want to use all available ressources
+local_nice="ionice -c3 nice "  # be nice with IO and CPU, may be empty if you want to use all available ressources
+
+# path to tools
+src_path_to_mysqldump=mysqldump
+dst_path_to_mysqldump=mysqldump
+dst_path_to_mysql=mysql
+dst_path_to_rsync=rsync
+dst_path_to_lftp=lftp
+dst_path_to_php="env php -qn"
+dst_path_to_resilient_replace="bin/resilient_replace"
+logfile="log/sitesync.log"
+
+# you can run scripts before and after database import by putting them in:
+# ./hook/before/*.sh
+# ./hook/after/*.sh
+
+# vim: filetype=sh
