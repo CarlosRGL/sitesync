@@ -18,7 +18,7 @@ __sitesync__ fait ensuite les **chercher-remplacer** classiques dans le dump ain
 
 * __sitesync__ **synchronise les fichiers** grâce à _rsync_.
 
-Par défaut, il ne récupère que les fichiers modifiés 
+Par défaut, il ne récupère que les fichiers modifiés
 
 
 ### Adaptations personnalisées (ou _hooks_)
@@ -31,7 +31,7 @@ Par défaut, il ne récupère que les fichiers modifiés
 ## Installation
 
 ```bash
-git clone https://github.com/pa-de-solminihac/sitesync
+git clone https://gitlab.quai13.net/teamtreize/sitesync.git
 ```
 
 
@@ -111,7 +111,7 @@ Pour en savoir plus :
 
 ### Configuration avancée
 
-Configuration des chercher-remplacer : 
+Configuration des chercher-remplacer :
 ```ini
 replace_src+=("chaine à chercher numéro 0")
 replace_dst+=("chaine qui remplace la chaine numéro 0")
@@ -169,7 +169,7 @@ Fonctionne sous Linux, Mac, et Windows avec [Cygwin](http://cygwin.com/install.h
 
 ### Aide à la configuration pour une installation type Windows + Xampp + Cygwin
 
-Lors de l'installation de [Cygwin](http://cygwin.com/install.html), installer les paquets suivants : 
+Lors de l'installation de [Cygwin](http://cygwin.com/install.html), installer les paquets suivants :
 - Database/mysql
 - Net/openssh
 - Net/rsync
@@ -188,28 +188,28 @@ user=root
 password=
 ```
 
-Pour Xampp, afin que l'import du dump SQL se déroule bien, il peut être nécessaire de modifier la configuration de mysql (fichier `my.ini`, section `[mysqld]`) : 
+Pour Xampp, afin que l'import du dump SQL se déroule bien, il peut être nécessaire de modifier la configuration de mysql (fichier `my.ini`, section `[mysqld]`) :
 ```ini
 innodb_buffer_pool_size = 32M
 max_allowed_packet = 32M
 innodb_log_file_size = 32M
 ```
-Pensez à relancer MySQL après avoir fait ces modifications. 
+Pensez à relancer MySQL après avoir fait ces modifications.
 
 > * * *
-> 
+>
 > **Remarque**
-> 
+>
 > Sur certaines configuration, le changement du `my.ini` empêche MySQL de redémarrer.
-> 
-> Il faut alors : 
+>
+> Il faut alors :
 > - **faire un dump de toutes les bases** (sauf les tables système) : `mysqldump -u root -p --add-drop-database --databases $(echo "SHOW DATABASES;" | mysql -u root -p | grep -v '^\(Database\|mysql\|information_schema\|performance_schema\)$' | tr "\\n" " ") > all.sql`
 > - stopper MySQL, supprimer les fichiers `ib_logfile*` et `ibdata*`, puis relancer MySQL
-> - **réimporter le dump de toutes les bases** : `mysql -u root -p --show-warnings < all.sql > import_log` 
-> 
+> - **réimporter le dump de toutes les bases** : `mysql -u root -p --show-warnings < all.sql > import_log`
+>
 > * * *
 
-Dans `~/.bash_profile`, afin de pouvoir utiliser `php` et `mysql` depuis la ligne de commande : 
+Dans `~/.bash_profile`, afin de pouvoir utiliser `php` et `mysql` depuis la ligne de commande :
 ```bash
 export PATH=$PATH:/cygdrive/c/xampp/mysql/bin:/cygdrive/c/xampp/php
 ```
