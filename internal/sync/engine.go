@@ -1,10 +1,12 @@
 package sync
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/carlosrgl/sitesync/internal/config"
@@ -131,11 +133,39 @@ func Run(ctx context.Context, cfg *config.Config, op Op, eventCh chan<- Event, l
 		eventCh <- Event{Type: EvStepStart, Step: stepNum}
 		log.Logf("Step %d/%d: %s", stepNum, len(steps), step.name)
 
+	retry:
 		stepStart := time.Now()
 		if err := step.fn(); err != nil {
-			eventCh <- Event{Type: EvStepFail, Step: stepNum, Message: err.Error()}
 			log.Logf("Step %d FAILED: %v", stepNum, err)
-			return
+
+			// Ask the consumer (TUI or headless) what to do.
+			replyCh := make(chan ErrorAction, 1)
+			eventCh <- Event{Type: EvStepFail, Step: stepNum, Message: err.Error(), ReplyCh: replyCh}
+
+			action := ActionQuit
+			select {
+			case a := <-replyCh:
+				action = a
+			case <-ctx.Done():
+				action = ActionQuit
+			}
+
+			switch action {
+			case ActionRetry:
+				log.Logf("Step %d: retrying", stepNum)
+				// Reset step state
+				eventCh <- Event{Type: EvStepStart, Step: stepNum}
+				goto retry
+			case ActionContinue:
+				log.Logf("Step %d: skipped by user", stepNum)
+				eventCh <- Event{Type: EvLog, Step: stepNum,
+					Message: fmt.Sprintf("  ⚠ step %d skipped", stepNum)}
+				eventCh <- Event{Type: EvStepDone, Step: stepNum}
+				continue
+			default: // ActionQuit
+				log.Logf("Step %d: aborted by user", stepNum)
+				return
+			}
 		}
 
 		elapsed := time.Since(stepStart)
@@ -164,6 +194,7 @@ func RunHeadless(ctx context.Context, cfg *config.Config, op Op, log *logger.Log
 	eventCh := make(chan Event, 64)
 	go Run(ctx, cfg, op, eventCh, log)
 
+	reader := bufio.NewReader(os.Stdin)
 	var lastErr string
 	for ev := range eventCh {
 		switch ev.Type {
@@ -173,7 +204,15 @@ func RunHeadless(ctx context.Context, cfg *config.Config, op Op, log *logger.Log
 			fmt.Printf("  ✔ [%d/7] %s done\n", ev.Step, StepName(ev.Step))
 		case EvStepFail:
 			fmt.Printf("  ✘ [%d/7] %s FAILED: %s\n", ev.Step, StepName(ev.Step), ev.Message)
-			lastErr = ev.Message
+			if ev.ReplyCh != nil {
+				action := promptErrorAction(reader)
+				ev.ReplyCh <- action
+				if action == ActionQuit {
+					lastErr = ev.Message
+				}
+			} else {
+				lastErr = ev.Message
+			}
 		case EvProgress:
 			fmt.Printf("\r       %3.0f%%", ev.Progress*100)
 		case EvLog:
@@ -186,6 +225,23 @@ func RunHeadless(ctx context.Context, cfg *config.Config, op Op, log *logger.Log
 		return fmt.Errorf("sync failed: %s", lastErr)
 	}
 	return nil
+}
+
+// promptErrorAction asks the user what to do after a step failure in headless mode.
+func promptErrorAction(reader *bufio.Reader) ErrorAction {
+	for {
+		fmt.Print("\n  [r]etry / [c]ontinue / [q]uit? ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+		switch input {
+		case "r", "retry":
+			return ActionRetry
+		case "c", "continue":
+			return ActionContinue
+		case "q", "quit", "":
+			return ActionQuit
+		}
+	}
 }
 
 // formatDuration returns a human-readable duration string.

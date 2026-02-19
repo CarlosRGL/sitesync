@@ -56,6 +56,11 @@ type Model struct {
 	failMsg    string
 	width      int
 	height     int
+
+	// Error recovery state
+	errorChoice int                        // 0=retry, 1=continue, 2=quit
+	replyCh     chan<- syncsvc.ErrorAction // non-nil when waiting for user choice
+	failedStep  int                        // which step failed
 }
 
 func New(cfg *config.Config, op syncsvc.Op, confName string, log *logger.Logger) Model {
@@ -137,15 +142,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "l":
-			m.logVisible = !m.logVisible
-		case "q", "ctrl+c":
-			if m.done || m.failed {
+		// Error recovery mode: arrow keys + enter to choose
+		if m.failed && m.replyCh != nil {
+			switch msg.String() {
+			case "left", "h":
+				if m.errorChoice > 0 {
+					m.errorChoice--
+				}
+			case "right", "l":
+				if m.errorChoice < 2 {
+					m.errorChoice++
+				}
+			case "r":
+				m.errorChoice = 0
+				m.sendErrorAction()
+				cmds = append(cmds, waitForEvent(m.eventCh))
+			case "c":
+				m.errorChoice = 1
+				m.sendErrorAction()
+				cmds = append(cmds, waitForEvent(m.eventCh))
+			case "enter":
+				m.sendErrorAction()
+				if m.errorChoice == 2 { // quit
+					return m, func() tea.Msg { return BackMsg{} }
+				}
+				cmds = append(cmds, waitForEvent(m.eventCh))
+			case "q", "ctrl+c":
+				m.errorChoice = 2
+				m.sendErrorAction()
 				return m, func() tea.Msg { return BackMsg{} }
 			}
-			// Abort: cancel the context
-			m.cancelFn()
+		} else {
+			switch msg.String() {
+			case "l":
+				m.logVisible = !m.logVisible
+			case "q", "ctrl+c":
+				if m.done || m.failed {
+					return m, func() tea.Msg { return BackMsg{} }
+				}
+				// Abort: cancel the context
+				m.cancelFn()
+			}
 		}
 	}
 
@@ -174,6 +211,11 @@ func (m Model) applyEvent(ev syncsvc.Event) Model {
 		}
 		m.failed = true
 		m.failMsg = ev.Message
+		m.failedStep = ev.Step
+		m.errorChoice = 0
+		if ev.ReplyCh != nil {
+			m.replyCh = ev.ReplyCh
+		}
 	case syncsvc.EvProgress:
 		if ev.Step >= 1 && ev.Step <= 7 {
 			m.steps[ev.Step].progress = ev.Progress
@@ -244,6 +286,24 @@ func styleLogLine(line string) string {
 	return styles.LogPrefixDim.Render("  " + trimmed)
 }
 
+// sendErrorAction sends the selected action to the engine and resets error state.
+func (m *Model) sendErrorAction() {
+	if m.replyCh == nil {
+		return
+	}
+	actions := []syncsvc.ErrorAction{syncsvc.ActionRetry, syncsvc.ActionContinue, syncsvc.ActionQuit}
+	m.replyCh <- actions[m.errorChoice]
+	if m.errorChoice != 2 { // not quit
+		m.failed = false
+		m.failMsg = ""
+		if m.errorChoice == 0 { // retry — reset step
+			m.steps[m.failedStep].status = statusActive
+			m.steps[m.failedStep].progress = 0
+		}
+	}
+	m.replyCh = nil
+}
+
 func (m Model) View() string {
 	var rows []string
 
@@ -261,6 +321,20 @@ func (m Model) View() string {
 	// ── Status ──────────────────────────────────────────
 	if m.failed {
 		rows = append(rows, styles.Error.Render("  ✘ "+m.failMsg))
+		if m.replyCh != nil {
+			// Show retry / continue / quit picker
+			choices := []string{"retry", "continue", "quit"}
+			var bar string
+			for i, c := range choices {
+				if i == m.errorChoice {
+					bar += styles.SelectedItem.Render(fmt.Sprintf(" [%s] ", c))
+				} else {
+					bar += styles.Muted.Render(fmt.Sprintf("  %s  ", c))
+				}
+			}
+			rows = append(rows, "")
+			rows = append(rows, "  "+bar)
+		}
 		rows = append(rows, "")
 	}
 	if m.done {
@@ -286,11 +360,15 @@ func (m Model) View() string {
 
 	// ── Help ────────────────────────────────────────────
 	var helpPairs []string
-	helpPairs = append(helpPairs, "l", "toggle log")
-	if m.done || m.failed {
-		helpPairs = append(helpPairs, "q", "back")
+	if m.failed && m.replyCh != nil {
+		helpPairs = append(helpPairs, "←/→", "select", "enter", "confirm", "r", "retry", "c", "continue", "q", "quit")
 	} else {
-		helpPairs = append(helpPairs, "q", "abort")
+		helpPairs = append(helpPairs, "l", "toggle log")
+		if m.done || m.failed {
+			helpPairs = append(helpPairs, "q", "back")
+		} else {
+			helpPairs = append(helpPairs, "q", "abort")
+		}
 	}
 	rows = append(rows, styles.StatusBar.Render(styles.RenderHelp(helpPairs...)))
 
