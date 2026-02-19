@@ -1,5 +1,6 @@
 # ── Binaries & build ─────────────────────────────────────
 bin/
+dist/
 *.exe
 *.dll
 *.so
@@ -40,3 +41,4 @@ Thumbs.db
 
 # ── Go module cache (local) ─────────────────────────────
 vendor/
+config3

@@ -13,7 +13,8 @@ import (
 	"github.com/carlosrgl/sitesync/internal/tui"
 )
 
-const version = "3.0.0"
+// version is set at build time via -ldflags "-X main.version=..."
+var version = "3.0.0-dev"
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {

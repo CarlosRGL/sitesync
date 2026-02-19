@@ -43,11 +43,11 @@ Supports WordPress, Drupal, PrestaShop, SPIP, and any other PHP-serializing CMS.
 
 ## Requirements
 
-- **Go 1.23+** (to build from source)
 - SSH access to the remote server
 - `rsync` or `lftp` for file sync
 - `mysqldump` / `mysql` for database sync
 - `gzip` (optional — for compressed dumps)
+- **Go 1.23+** only needed if building from source
 
 No PHP, no Bash runtime — a single static binary.
 
@@ -55,13 +55,34 @@ No PHP, no Bash runtime — a single static binary.
 
 ## Installation
 
-### Interactive setup (recommended)
+### Quick install (no Go required)
+
+```bash
+curl -fsSL https://gitlab.quai13.net/teamtreize/sitesync/-/raw/main/install.sh | sh
+```
+
+This auto-detects your OS (macOS / Linux) and architecture (amd64 / arm64), downloads the correct binary, and installs it to `~/bin`. If no pre-built binary is available, it falls back to building from source (requires Go).
+
+Then run the interactive setup:
+
+```bash
+sitesync setup
+```
+
+### Build from source
 
 ```bash
 git clone ssh://git@gitlab.quai13.net:2221/teamtreize/sitesync.git
 cd sitesync
-go build -o sitesync ./cmd/sitesync
-./sitesync setup
+make install          # builds and copies to ~/bin/sitesync
+sitesync setup        # interactive environment setup
+```
+
+### Cross-compile release binaries
+
+```bash
+make release          # builds for darwin/amd64, darwin/arm64, linux/amd64, linux/arm64
+ls dist/              # upload these to GitLab releases
 ```
 
 The `setup` command walks you through:
@@ -70,14 +91,6 @@ The `setup` command walks you through:
 2. Adding the env variable to your shell profile
 3. Installing the binary to `~/bin` (or a custom path)
 4. Migrating any existing shell configs to TOML
-
-### Manual install
-
-```bash
-go build -o sitesync ./cmd/sitesync
-mv sitesync /usr/local/bin/sitesync
-export SITESYNC_ETC="/path/to/your/etc"  # add to ~/.zshrc
-```
 
 ### Verify
 
@@ -543,7 +556,9 @@ sitesync replace "https://prod.example.com" "http://local.test" /path/to/dump.sq
 sitesync/
 ├── cmd/sitesync/
 │   ├── main.go                       # Entry point, Cobra CLI
-│   └── setup.go                      # Interactive installer command
+│   └── setup.go                      # Interactive setup command
+├── install.sh                            # curl-pipe installer (no Go needed)
+├── Makefile                              # build, install, cross-compile
 ├── internal/
 │   ├── config/
 │   │   ├── config.go                 # TOML struct definitions
