@@ -63,7 +63,7 @@ type Model struct {
 	failedStep  int                        // which step failed
 }
 
-func New(cfg *config.Config, op syncsvc.Op, confName string, log *logger.Logger) Model {
+func New(cfg *config.Config, op syncsvc.Op, confName string, log logger.Logger) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = styles.StepActiveStyle

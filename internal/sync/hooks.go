@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/carlosrgl/sitesync/internal/config"
 )
@@ -24,8 +23,8 @@ func RunHooks(ctx context.Context, cfg *config.Config, phase string, sqlFile str
 	sort.Strings(entries)
 
 	for _, script := range entries {
-		eventCh <- Event{Type: EvLog, Step: step,
-			Message: fmt.Sprintf("  running hook: %s", filepath.Base(script))}
+		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step,
+			Message: fmt.Sprintf("  running hook: %s", filepath.Base(script))})
 
 		cmd := exec.CommandContext(ctx, "bash", script)
 		cmd.Env = hookEnv(cfg, sqlFile)
@@ -93,26 +92,4 @@ func hookEnv(cfg *config.Config, sqlFile string) []string {
 	}
 
 	return append(base, extra...)
-}
-
-// buildMySQLArgsForHook returns a mysql CLI invocation string suitable for
-// use inside hook bash scripts (e.g. for pipe-based SQL execution).
-func buildMySQLArgsForHook(cfg *config.Config) string {
-	dst := cfg.Destination
-	parts := []string{dst.PathToMySQL}
-	if dst.PathToMySQL == "" {
-		parts[0] = "mysql"
-	}
-	parts = append(parts, "-h", dst.DBHostname)
-	if dst.DBPort != "" {
-		parts = append(parts, "-P", dst.DBPort)
-	}
-	if dst.DBUser != "" {
-		parts = append(parts, "-u", dst.DBUser)
-	}
-	if dst.DBPassword != "" {
-		parts = append(parts, fmt.Sprintf("-p%s", dst.DBPassword))
-	}
-	parts = append(parts, dst.DBName)
-	return strings.Join(parts, " ")
 }

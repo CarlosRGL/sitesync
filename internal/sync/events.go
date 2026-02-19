@@ -1,5 +1,7 @@
 package sync
 
+import "context"
+
 // EventType identifies what kind of engine event was emitted.
 type EventType uint8
 
@@ -49,8 +51,7 @@ const (
 	OpFiles           // files only
 )
 
-// StepName returns
-// a human-readable name for each step (1-indexed).
+// StepName returns a human-readable name for each step (1-indexed).
 func StepName(step int) string {
 	names := [...]string{
 		"",
@@ -66,4 +67,16 @@ func StepName(step int) string {
 		return "Unknown"
 	}
 	return names[step]
+}
+
+// sendEvent sends ev to ch, returning true on success.
+// It selects on ctx.Done() to avoid blocking forever when the consumer
+// has stopped draining the channel (e.g. the user quit the TUI mid-sync).
+func sendEvent(ctx context.Context, ch chan<- Event, ev Event) bool {
+	select {
+	case ch <- ev:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }

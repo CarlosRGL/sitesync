@@ -3,6 +3,7 @@ package sync
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/carlosrgl/sitesync/internal/config"
 )
@@ -19,7 +21,7 @@ import (
 // It writes the dump to dumpPath (a temp file path).
 func FetchDump(ctx context.Context, cfg *config.Config, dumpPath string, eventCh chan<- Event) error {
 	sendLog := func(msg string) {
-		eventCh <- Event{Type: EvLog, Step: 1, Message: msg}
+		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: 1, Message: msg})
 	}
 
 	var err error
@@ -50,7 +52,7 @@ func FetchDump(ctx context.Context, cfg *config.Config, dumpPath string, eventCh
 		return err
 	}
 
-	// Report dump file size
+	// Report dump file size.
 	if fi, statErr := os.Stat(dumpPath); statErr == nil {
 		sendLog(fmt.Sprintf("  dump: %s (%s)", filepath.Base(dumpPath), humanSize(fi.Size())))
 	}
@@ -60,7 +62,7 @@ func FetchDump(ctx context.Context, cfg *config.Config, dumpPath string, eventCh
 // ImportDump implements Step 4: import the SQL dump into the local database.
 func ImportDump(ctx context.Context, cfg *config.Config, dumpPath string, eventCh chan<- Event, step int) error {
 	sendLog := func(msg string) {
-		eventCh <- Event{Type: EvLog, Step: step, Message: msg}
+		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step, Message: msg})
 	}
 
 	sendLog(fmt.Sprintf("  target: %s@%s → %s", cfg.Destination.DBUser, cfg.Destination.DBHostname, cfg.Destination.DBName))
@@ -78,31 +80,18 @@ func ImportDump(ctx context.Context, cfg *config.Config, dumpPath string, eventC
 
 	var reader io.Reader = f
 
-	// If the file is gzip-compressed, stream through gunzip.
-	isGzip := strings.HasSuffix(dumpPath, ".gz")
-	if isGzip {
-		gunzip := exec.CommandContext(ctx, "gunzip", "--stdout", dumpPath)
-		pr, pw := io.Pipe()
-		gunzip.Stdout = pw
-		gunzip.Stderr = io.Discard
-		if err := gunzip.Start(); err != nil {
-			return fmt.Errorf("start gunzip: %w", err)
+	// If the file is gzip-compressed, decompress using stdlib — no external gunzip needed.
+	if strings.HasSuffix(dumpPath, ".gz") {
+		gr, gzErr := gzip.NewReader(f)
+		if gzErr != nil {
+			return fmt.Errorf("open gzip reader: %w", gzErr)
 		}
-		go func() {
-			if err := gunzip.Wait(); err != nil {
-				pw.CloseWithError(err)
-			} else {
-				pw.Close()
-			}
-		}()
-		reader = pr
-		// The actual dumpPath fed to mysql will be stdin below.
+		defer gr.Close()
+		reader = gr
 	}
-	_ = isGzip // handled above via reader
 
 	// Strip MariaDB-specific comments that break MySQL import,
-	// but only when the dump actually contains them (avoids line-scanning
-	// overhead and buffer-size issues for large MySQL dumps).
+	// but only when the dump actually contains them.
 	if isMariaDBDump(dumpPath) {
 		sendLog("  detected MariaDB dump, stripping M! comments")
 		reader = newMariaDBStripper(reader, sendLog)
@@ -110,18 +99,20 @@ func ImportDump(ctx context.Context, cfg *config.Config, dumpPath string, eventC
 
 	mysqlArgs := buildMySQLArgs(cfg)
 	mysql := exec.CommandContext(ctx, mysqlBin(cfg), mysqlArgs...)
-	// Wrap reader with progress tracking
+	// Wrap reader with progress tracking.
 	if fileSize > 0 {
 		reader = &progressReader{
 			r:       reader,
 			total:   fileSize,
 			eventCh: eventCh,
 			step:    step,
+			ctx:     ctx,
 		}
 	}
 	mysql.Stdin = reader
 
-	sendLog(fmt.Sprintf("  $ %s %s", mysqlBin(cfg), strings.Join(mysqlArgs, " ")))
+	// Log the command with password redacted.
+	sendLog(fmt.Sprintf("  $ %s %s", mysqlBin(cfg), redactArgs(mysqlArgs)))
 
 	return streamCmd(ctx, eventCh, step, mysql, true)
 }
@@ -189,15 +180,22 @@ func dumpRemoteDB(ctx context.Context, cfg *config.Config, dumpPath string, log 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("ssh start: %w", err)
 	}
+
+	// Wait for stderr goroutine before returning to prevent log-loss race.
+	var wg sync.WaitGroup
 	if stderrPipe != nil {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			sc := bufio.NewScanner(stderrPipe)
 			for sc.Scan() {
 				log("  " + sc.Text())
 			}
 		}()
 	}
-	return cmd.Wait()
+	err = cmd.Wait()
+	wg.Wait()
+	return err
 }
 
 func runDump(ctx context.Context, cfg *config.Config, args []string, dumpPath string, log func(string)) error {
@@ -215,19 +213,26 @@ func runDump(ctx context.Context, cfg *config.Config, args []string, dumpPath st
 
 	cmd := exec.CommandContext(ctx, dumpBin, args...)
 	cmd.Stdout = out
-	outerr, _ := cmd.StderrPipe()
+	stderrPipe, _ := cmd.StderrPipe()
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	if outerr != nil {
+
+	// Wait for stderr goroutine before returning to prevent log-loss race.
+	var wg sync.WaitGroup
+	if stderrPipe != nil {
+		wg.Add(1)
 		go func() {
-			sc := bufio.NewScanner(outerr)
+			defer wg.Done()
+			sc := bufio.NewScanner(stderrPipe)
 			for sc.Scan() {
 				log("  " + sc.Text())
 			}
 		}()
 	}
-	return cmd.Wait()
+	err = cmd.Wait()
+	wg.Wait()
+	return err
 }
 
 func buildDumpArgs(cfg *config.Config, remote bool) []string {
@@ -254,11 +259,11 @@ func buildDumpArgs(cfg *config.Config, remote bool) []string {
 	for _, tbl := range cfg.Database.IgnoreTables {
 		args = append(args, fmt.Sprintf("--ignore-table=%s.%s", src.DBName, tbl))
 	}
-	if !remote && src.DBName != "" {
-		args = append(args, src.DBName)
-	} else if remote {
+	// Append DBName for both local and remote; guard against empty name.
+	if src.DBName != "" {
 		args = append(args, src.DBName)
 	}
+	_ = remote // reserved for future use (e.g. --compress flag differentiation)
 	return args
 }
 
@@ -286,8 +291,23 @@ func mysqlBin(cfg *config.Config) string {
 	return "mysql"
 }
 
+// redactArgs returns a space-joined arg list with any -p<password> replaced
+// by -p[REDACTED] so credentials are never exposed in log output or TUI.
+func redactArgs(args []string) string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		if strings.HasPrefix(a, "-p") && len(a) > 2 {
+			out[i] = "-p[REDACTED]"
+		} else {
+			out[i] = a
+		}
+	}
+	return strings.Join(out, " ")
+}
+
 // streamCmd runs cmd and streams stderr (and optionally stdout) lines as EvLog events.
-// If captureStdin is true, it expects cmd.Stdin to have been set externally.
+// It waits for all scanner goroutines to finish via WaitGroup before returning,
+// preventing a log-loss race where cmd.Wait() exits before the last lines are emitted.
 func streamCmd(ctx context.Context, eventCh chan<- Event, step int, cmd *exec.Cmd, stderrOnly bool) error {
 	stderrPipe, _ := cmd.StderrPipe()
 	var stdoutPipe io.ReadCloser
@@ -299,22 +319,29 @@ func streamCmd(ctx context.Context, eventCh chan<- Event, step int, cmd *exec.Cm
 		return err
 	}
 
+	var wg sync.WaitGroup
+
 	scan := func(r io.Reader) {
+		defer wg.Done()
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 512*1024), 512*1024)
 		for sc.Scan() {
-			eventCh <- Event{Type: EvLog, Step: step, Message: sc.Text()}
+			sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step, Message: sc.Text()})
 		}
 	}
 
 	if stderrPipe != nil {
+		wg.Add(1)
 		go scan(stderrPipe)
 	}
 	if stdoutPipe != nil {
+		wg.Add(1)
 		go scan(stdoutPipe)
 	}
 
-	return cmd.Wait()
+	err := cmd.Wait()
+	wg.Wait() // drain all log lines before returning
+	return err
 }
 
 // DumpFilePath returns the expected path for the SQL dump temp file.
@@ -330,16 +357,17 @@ type progressReader struct {
 	eventCh chan<- Event
 	step    int
 	lastPct int
+	ctx     context.Context
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.r.Read(p)
 	pr.read += int64(n)
 	pct := int(float64(pr.read) / float64(pr.total) * 100)
-	// Only emit progress every ~1% to avoid flooding the channel
+	// Only emit progress every ~1% to avoid flooding the channel.
 	if pct != pr.lastPct && pct <= 100 {
 		pr.lastPct = pct
-		pr.eventCh <- Event{Type: EvProgress, Step: pr.step, Progress: float64(pct) / 100.0}
+		sendEvent(pr.ctx, pr.eventCh, Event{Type: EvProgress, Step: pr.step, Progress: float64(pct) / 100.0})
 	}
 	return n, err
 }

@@ -3,7 +3,7 @@ BINARY   := sitesync
 BUILD    := go build -ldflags "-s -w -X main.version=$(VERSION)"
 DIST     := dist
 
-.PHONY: build install clean release all
+.PHONY: build install clean release all test test-race lint coverage fuzz
 
 # ── Default: build for current OS/arch ───────────────────
 build:
@@ -12,6 +12,24 @@ build:
 install: build
 	cp $(BINARY) ~/bin/$(BINARY)
 	@echo "✔ installed to ~/bin/$(BINARY)"
+
+# ── Tests ─────────────────────────────────────────────────
+test:
+	go test ./...
+
+test-race:
+	go test -race ./...
+
+coverage:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "✔ coverage report: coverage.html"
+
+lint:
+	go vet ./...
+
+fuzz:
+	go test -fuzz=FuzzResilientReplaceLine -fuzztime=30s ./internal/sync/
 
 # ── Cross-compile all platforms ──────────────────────────
 release: clean
@@ -24,6 +42,6 @@ release: clean
 	@ls -lh $(DIST)/
 
 clean:
-	rm -rf $(DIST) $(BINARY)
+	rm -rf $(DIST) $(BINARY) coverage.out coverage.html
 
 all: release

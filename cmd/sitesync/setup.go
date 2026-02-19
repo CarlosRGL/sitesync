@@ -196,7 +196,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 			if failed > 0 {
 				fmt.Printf(", %s%d failed%s", yellow, failed, reset)
 			}
-			fmt.Println("\n")
+			fmt.Println()
 		} else {
 			fmt.Printf("   %sSkipped.%s Run `sitesync migrate --all` later.\n\n", dim, reset)
 		}

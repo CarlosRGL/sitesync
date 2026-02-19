@@ -31,7 +31,7 @@ type AppModel struct {
 	opsel   opselect.Model
 	syncing syncing.Model
 	editor  editor.Model
-	log     *logger.Logger
+	log     logger.Logger
 
 	// Transient state between screens
 	selectedConf string
@@ -41,7 +41,7 @@ type AppModel struct {
 }
 
 // New creates an initialised AppModel, pre-selecting confName if non-empty.
-func New(entries []config.ConfigEntry, preselect string, log *logger.Logger) AppModel {
+func New(entries []config.ConfigEntry, preselect string, log logger.Logger) AppModel {
 	m := AppModel{
 		screen: screenPicker,
 		picker: picker.New(entries),
@@ -137,8 +137,8 @@ func (m AppModel) updateOpSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		logFile := config.LogFile(cfg)
-		log, _ := logger.New(logFile)
-		if log == nil {
+		log, err := logger.New(logFile)
+		if err != nil {
 			log = logger.Discard()
 		}
 		m.syncing = syncing.New(cfg, ev.Op, m.selectedConf, log)

@@ -17,6 +17,9 @@ type ReplaceOptions struct {
 	Regex bool
 	// OnlyIntoSerialized skips replacement in plain (non-serialized) text.
 	OnlyIntoSerialized bool
+	// compiledRe is set internally by ResilientReplaceStream to avoid
+	// recompiling the same regex pattern on every line of the input.
+	compiledRe *regexp.Regexp
 }
 
 // phpSerialPattern matches PHP serialized strings: s:N:"content";
@@ -84,7 +87,10 @@ func resilientReplaceLiteral(search, replace, line string, opts ReplaceOptions) 
 }
 
 func resilientReplaceRegex(search, replace, line string, opts ReplaceOptions) string {
-	re := regexp.MustCompile(search)
+	re := opts.compiledRe
+	if re == nil {
+		re = regexp.MustCompile(search)
+	}
 
 	fixSerial := func(pattern *regexp.Regexp, wrap func(n int, s string) string) func(string) string {
 		return func(match string) string {
@@ -123,6 +129,15 @@ func resilientReplaceRegex(search, replace, line string, opts ReplaceOptions) st
 // ResilientReplaceStream applies search/replace to every line read from r,
 // writing results to w. This is used for streaming (e.g. SQL dump pipeline).
 func ResilientReplaceStream(search, replace string, r io.Reader, w io.Writer, opts ReplaceOptions) error {
+	// Compile the regex once here so resilientReplaceRegex doesn't re-compile
+	// it on every line (which would be O(n_lines) compilations over a large dump).
+	if opts.Regex && opts.compiledRe == nil {
+		re, err := regexp.Compile(search)
+		if err != nil {
+			return fmt.Errorf("invalid regex %q: %w", search, err)
+		}
+		opts.compiledRe = re
+	}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
 	bw := bufio.NewWriter(w)

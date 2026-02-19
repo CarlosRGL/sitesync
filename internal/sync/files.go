@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/carlosrgl/sitesync/internal/config"
 )
@@ -16,7 +17,7 @@ import (
 // SyncFiles implements Step 6: transfer files via rsync or lftp.
 func SyncFiles(ctx context.Context, cfg *config.Config, eventCh chan<- Event, step int) error {
 	if len(cfg.Sync) == 0 {
-		eventCh <- Event{Type: EvLog, Step: step, Message: "No sync pairs configured, skipping file sync"}
+		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step, Message: "No sync pairs configured, skipping file sync"})
 		return nil
 	}
 
@@ -37,8 +38,8 @@ func syncRsync(ctx context.Context, cfg *config.Config, eventCh chan<- Event, st
 	total := len(cfg.Sync)
 	for idx, pair := range cfg.Sync {
 		args := buildRsyncArgs(cfg, pair)
-		eventCh <- Event{Type: EvLog, Step: step,
-			Message: fmt.Sprintf("  $ %s %s", rsyncBin, strings.Join(args, " "))}
+		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step,
+			Message: fmt.Sprintf("  $ %s %s", rsyncBin, strings.Join(args, " "))})
 
 		cmd := exec.CommandContext(ctx, rsyncBin, args...)
 		baseProgress := float64(idx) / float64(total)
@@ -53,7 +54,6 @@ func syncRsync(ctx context.Context, cfg *config.Config, eventCh chan<- Event, st
 func buildRsyncArgs(cfg *config.Config, pair config.SyncPair) []string {
 	t := cfg.Transport
 	src := cfg.Source
-	dst := cfg.Destination
 
 	opts := t.RsyncOptions
 	if opts == "" {
@@ -61,19 +61,17 @@ func buildRsyncArgs(cfg *config.Config, pair config.SyncPair) []string {
 	}
 	args := strings.Fields(opts)
 
-	// SSH transport options
+	// SSH transport options.
 	sshOpt := fmt.Sprintf("ssh -p %d", src.Port)
 	args = append(args, "-e", sshOpt)
 
-	// Progress reporting
+	// Progress reporting.
 	args = append(args, "--info=progress2")
 
-	// Exclusions
+	// Exclusions.
 	for _, ex := range t.Exclude {
 		args = append(args, "--exclude", ex)
 	}
-
-	_ = dst // destination is already in pair.Dst
 
 	// Ensure trailing slash so rsync copies directory *contents*, not the
 	// directory itself (e.g. ".../public" → ".../public/").
@@ -93,16 +91,14 @@ func syncLFTP(ctx context.Context, cfg *config.Config, eventCh chan<- Event, ste
 		lftpBin = "lftp"
 	}
 
-	lf := cfg.Transport.LFTP
 	for _, pair := range cfg.Sync {
-		script := buildLFTPScript(cfg, pair)
-		eventCh <- Event{Type: EvLog, Step: step,
-			Message: fmt.Sprintf("  $ %s -c '...'", lftpBin)}
-		eventCh <- Event{Type: EvLog, Step: step,
-			Message: "  " + script}
+		script, logScript := buildLFTPScript(cfg, pair)
+		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step,
+			Message: fmt.Sprintf("  $ %s -c '...'", lftpBin)})
+		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step,
+			Message: "  " + logScript})
 
 		cmd := exec.CommandContext(ctx, lftpBin, "-c", script)
-		_ = lf
 		if err := streamCmd(ctx, eventCh, step, cmd, false); err != nil {
 			return fmt.Errorf("lftp %s → %s: %w", pair.Src, pair.Dst, err)
 		}
@@ -110,7 +106,9 @@ func syncLFTP(ctx context.Context, cfg *config.Config, eventCh chan<- Event, ste
 	return nil
 }
 
-func buildLFTPScript(cfg *config.Config, pair config.SyncPair) string {
+// buildLFTPScript returns (script, logSafeScript) where logSafeScript has the
+// password replaced with [REDACTED] so it is safe to display in logs/TUI.
+func buildLFTPScript(cfg *config.Config, pair config.SyncPair) (script, logScript string) {
 	src := cfg.Source
 	lf := cfg.Transport.LFTP
 	t := cfg.Transport
@@ -142,14 +140,17 @@ func buildLFTPScript(cfg *config.Config, pair config.SyncPair) string {
 	srcPath := ensureTrailingSlash(pair.Src)
 	dstPath := ensureTrailingSlash(pair.Dst)
 
-	url := fmt.Sprintf("%s://%s@%s:%d%s", protocol, src.User, src.Server, port, srcPath)
+	baseURL := fmt.Sprintf("%s://%s@%s:%d%s", protocol, src.User, src.Server, port, srcPath)
+	url := baseURL
 	if lf.Password != "" {
 		url = fmt.Sprintf("%s://%s:%s@%s:%d%s", protocol, src.User, lf.Password, src.Server, port, srcPath)
 	}
 
-	sb.WriteString(fmt.Sprintf("open %s; ", url))
-	sb.WriteString(fmt.Sprintf("mirror %s . %s", mirrorOpts, dstPath))
-	return sb.String()
+	prefix := sb.String()
+	suffix := fmt.Sprintf("open %s; mirror %s . %s", url, mirrorOpts, dstPath)
+	logSuffix := fmt.Sprintf("open %s; mirror %s . %s", baseURL, mirrorOpts, dstPath)
+
+	return prefix + suffix, prefix + logSuffix
 }
 
 // ensureTrailingSlash appends a "/" to path if it doesn't already end with one.
@@ -195,7 +196,10 @@ func streamCmdWithProgress(ctx context.Context, eventCh chan<- Event, step int, 
 		return 0, nil, nil
 	}
 
+	var wg sync.WaitGroup
+
 	scanProgress := func(r io.Reader) {
+		defer wg.Done()
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 512*1024), 512*1024)
 		sc.Split(scanCR)
@@ -205,27 +209,31 @@ func streamCmdWithProgress(ctx context.Context, eventCh chan<- Event, step int, 
 			if trimmed == "" {
 				continue
 			}
-			// Try to parse rsync progress percentage
+			// Try to parse rsync progress percentage.
 			if m := reRsyncProgress.FindStringSubmatch(trimmed); len(m) >= 2 {
 				if pct, err := strconv.Atoi(m[1]); err == nil {
 					p := baseProgress + (float64(pct)/100.0)*sliceSize
 					if p > 1.0 {
 						p = 1.0
 					}
-					eventCh <- Event{Type: EvProgress, Step: step, Progress: p}
+					sendEvent(ctx, eventCh, Event{Type: EvProgress, Step: step, Progress: p})
 					continue // don't log raw progress lines
 				}
 			}
-			eventCh <- Event{Type: EvLog, Step: step, Message: trimmed}
+			sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step, Message: trimmed})
 		}
 	}
 
 	if stderrPipe != nil {
+		wg.Add(1)
 		go scanProgress(stderrPipe)
 	}
 	if stdoutPipe != nil {
+		wg.Add(1)
 		go scanProgress(stdoutPipe)
 	}
 
-	return cmd.Wait()
+	err := cmd.Wait()
+	wg.Wait() // drain all progress/log lines before returning
+	return err
 }
