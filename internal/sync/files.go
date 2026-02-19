@@ -75,9 +75,14 @@ func buildRsyncArgs(cfg *config.Config, pair config.SyncPair) []string {
 
 	_ = dst // destination is already in pair.Dst
 
+	// Ensure trailing slash so rsync copies directory *contents*, not the
+	// directory itself (e.g. ".../public" → ".../public/").
+	srcPath := ensureTrailingSlash(pair.Src)
+	dstPath := ensureTrailingSlash(pair.Dst)
+
 	// source: user@host:path
-	remoteSrc := fmt.Sprintf("%s@%s:%s", src.User, src.Server, pair.Src)
-	args = append(args, remoteSrc, pair.Dst)
+	remoteSrc := fmt.Sprintf("%s@%s:%s", src.User, src.Server, srcPath)
+	args = append(args, remoteSrc, dstPath)
 
 	return args
 }
@@ -134,14 +139,26 @@ func buildLFTPScript(cfg *config.Config, pair config.SyncPair) string {
 	if protocol == "" {
 		protocol = "ftp"
 	}
-	url := fmt.Sprintf("%s://%s@%s:%d%s", protocol, src.User, src.Server, port, pair.Src)
+	srcPath := ensureTrailingSlash(pair.Src)
+	dstPath := ensureTrailingSlash(pair.Dst)
+
+	url := fmt.Sprintf("%s://%s@%s:%d%s", protocol, src.User, src.Server, port, srcPath)
 	if lf.Password != "" {
-		url = fmt.Sprintf("%s://%s:%s@%s:%d%s", protocol, src.User, lf.Password, src.Server, port, pair.Src)
+		url = fmt.Sprintf("%s://%s:%s@%s:%d%s", protocol, src.User, lf.Password, src.Server, port, srcPath)
 	}
 
 	sb.WriteString(fmt.Sprintf("open %s; ", url))
-	sb.WriteString(fmt.Sprintf("mirror %s . %s", mirrorOpts, pair.Dst))
+	sb.WriteString(fmt.Sprintf("mirror %s . %s", mirrorOpts, dstPath))
 	return sb.String()
+}
+
+// ensureTrailingSlash appends a "/" to path if it doesn't already end with one.
+// This is critical for rsync: "src/" copies contents, "src" copies the folder.
+func ensureTrailingSlash(path string) string {
+	if path != "" && !strings.HasSuffix(path, "/") {
+		return path + "/"
+	}
+	return path
 }
 
 // reRsyncProgress matches rsync --info=progress2 output lines like:
