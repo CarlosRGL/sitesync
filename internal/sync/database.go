@@ -2,12 +2,14 @@ package sync
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/carlosrgl/sitesync/internal/config"
@@ -97,6 +99,10 @@ func ImportDump(ctx context.Context, cfg *config.Config, dumpPath string, eventC
 		// The actual dumpPath fed to mysql will be stdin below.
 	}
 	_ = isGzip // handled above via reader
+
+	// Strip MariaDB-specific comments that break MySQL import.
+	// e.g. /*M!999999\- enable the sandbox mode */
+	reader = newMariaDBStripper(reader, sendLog)
 
 	mysqlArgs := buildMySQLArgs(cfg)
 	mysql := exec.CommandContext(ctx, mysqlBin(cfg), mysqlArgs...)
@@ -332,4 +338,61 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 		pr.eventCh <- Event{Type: EvProgress, Step: pr.step, Progress: float64(pct) / 100.0}
 	}
 	return n, err
+}
+
+// ── MariaDB comment stripper ────────────────────────────────────────────────
+
+// mariaDBCommentRe matches MariaDB-specific comments that MySQL rejects:
+//   - /*M!999999\- enable the sandbox mode */
+var mariaDBCommentRe = regexp.MustCompile(`/\*M!.*?\*/`)
+
+// mariaDBLineRe matches full-line MariaDB comments (the most common case).
+var mariaDBLineRe = regexp.MustCompile(`(?m)^\s*/\*M!.*?\*/\s*;?\s*$`)
+
+// newMariaDBStripper returns an io.Reader that strips MariaDB-specific
+// comments line-by-line from r before passing data downstream.
+func newMariaDBStripper(r io.Reader, logFn func(string)) io.Reader {
+	pr, pw := io.Pipe()
+	go func() {
+		defer pw.Close()
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 2*1024*1024), 2*1024*1024) // 2 MB line buffer
+		stripped := 0
+		for sc.Scan() {
+			line := sc.Bytes()
+			// Skip full-line MariaDB comments entirely.
+			if mariaDBLineRe.Match(line) {
+				stripped++
+				continue
+			}
+			// Strip inline MariaDB comments within a line.
+			cleaned := mariaDBCommentRe.ReplaceAll(line, nil)
+			// Write the (possibly cleaned) line + newline.
+			if _, err := pw.Write(append(cleaned, '\n')); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+		}
+		if err := sc.Err(); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if stripped > 0 {
+			logFn(fmt.Sprintf("  stripped %d MariaDB-specific comment line(s)", stripped))
+		}
+	}()
+	return pr
+}
+
+// isMariaDBDump does a quick check on the first few KB of a file to detect
+// whether it was produced by MariaDB's mysqldump.
+func isMariaDBDump(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	buf := make([]byte, 4096)
+	n, _ := f.Read(buf)
+	return bytes.Contains(buf[:n], []byte("MariaDB")) || bytes.Contains(buf[:n], []byte("/*M!"))
 }

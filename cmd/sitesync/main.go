@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -34,6 +35,8 @@ var rootCmd = &cobra.Command{
 	Short: "Sync a remote website to your local environment",
 	Long: `sitesync synchronises a remote website (database + files) to your local
 development environment. Running without arguments opens the interactive TUI.`,
+	Args: cobra.MaximumNArgs(1),
+	ValidArgs: []string{"sql", "files"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opStr := ""
 		if len(args) > 0 {
@@ -147,7 +150,7 @@ func runHeadless(confName string, op syncsvc.Op) error {
 	}
 	defer log.Close()
 
-	return syncsvc.RunHeadless(nil, cfg, op, log)
+	return syncsvc.RunHeadless(context.Background(), cfg, op, log)
 }
 
 // ── migrate helper ───────────────────────────────────────────────────────────
