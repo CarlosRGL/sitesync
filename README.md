@@ -50,7 +50,6 @@ Works on **macOS** and **Linux** (amd64 / arm64). Can run on servers for server-
 - SSH access to the remote server
 - `rsync` or `lftp` for file sync
 - `mysqldump` / `mysql` for database sync
-- `gzip` (optional — for compressed dumps)
 - **Go 1.23+** only needed if building from source
 
 No PHP, no Bash runtime — a single static binary.
@@ -106,7 +105,7 @@ Just re-run the install script or `git pull && make install`. Configs are never 
 
 ```bash
 sitesync version
-# sitesync 3.0.0
+# sitesync 3.1.0
 ```
 
 ---
@@ -550,6 +549,14 @@ sitesync replace "https://prod.example.com" "http://local.test" /path/to/dump.sq
 | `q`                   | Abort (cancels the running step) |
 | `q` (after done/fail) | Return to site picker            |
 
+When a step fails, a prompt appears with three options:
+
+| Key | Action                              |
+| --- | ----------------------------------- |
+| `r` | Retry the failed step               |
+| `c` | Skip the step and continue          |
+| `q` | Abort the entire sync               |
+
 ### Config editor
 
 | Key         | Action                     |
@@ -580,7 +587,7 @@ sitesync/
 │   │   ├── engine.go                 # 7-step orchestrator
 │   │   ├── database.go               # Steps 1 and 4 (dump + import)
 │   │   ├── replace.go                # PHP serialize()-aware find/replace
-│   │   ├── replace_test.go           # 12 unit tests
+│   │   ├── replace_test.go           # Table-driven tests, benchmarks, fuzz
 │   │   ├── hooks.go                  # Steps 3, 5, 7 (hook runner)
 │   │   ├── files.go                  # Step 6 (rsync / lftp)
 │   │   └── events.go                 # Event types for engine→TUI channel
@@ -647,7 +654,10 @@ No runtime dependencies — the compiled binary includes everything.
 ### Run tests
 
 ```bash
-go test ./...
+make test          # go test ./...
+make test-race     # go test -race ./...
+make coverage      # generates coverage.html
+make fuzz          # fuzz ResilientReplaceLine for 30s
 ```
 
 The replace engine has full test coverage including:
@@ -669,7 +679,7 @@ go run ./cmd/sitesync
 ### Lint
 
 ```bash
-go vet ./...
+make lint          # go vet ./...
 ```
 
 ---
