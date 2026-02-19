@@ -65,6 +65,7 @@ go build -o sitesync ./cmd/sitesync
 ```
 
 The `setup` command walks you through:
+
 1. Setting the config directory (`SITESYNC_ETC`)
 2. Adding the env variable to your shell profile
 3. Installing the binary to `~/bin` (or a custom path)
