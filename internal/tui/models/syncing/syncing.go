@@ -114,7 +114,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.viewport.Width = msg.Width - 4
-		logH := msg.Height - (8 + 7*2) // approx step rows height
+		logH := msg.Height - 14 // header(3) + steps(~7) + separator(1) + padding(3)
 		if logH < 4 {
 			logH = 4
 		}
