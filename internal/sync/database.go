@@ -100,9 +100,13 @@ func ImportDump(ctx context.Context, cfg *config.Config, dumpPath string, eventC
 	}
 	_ = isGzip // handled above via reader
 
-	// Strip MariaDB-specific comments that break MySQL import.
-	// e.g. /*M!999999\- enable the sandbox mode */
-	reader = newMariaDBStripper(reader, sendLog)
+	// Strip MariaDB-specific comments that break MySQL import,
+	// but only when the dump actually contains them (avoids line-scanning
+	// overhead and buffer-size issues for large MySQL dumps).
+	if isMariaDBDump(dumpPath) {
+		sendLog("  detected MariaDB dump, stripping M! comments")
+		reader = newMariaDBStripper(reader, sendLog)
+	}
 
 	mysqlArgs := buildMySQLArgs(cfg)
 	mysql := exec.CommandContext(ctx, mysqlBin(cfg), mysqlArgs...)
@@ -356,7 +360,7 @@ func newMariaDBStripper(r io.Reader, logFn func(string)) io.Reader {
 	go func() {
 		defer pw.Close()
 		sc := bufio.NewScanner(r)
-		sc.Buffer(make([]byte, 2*1024*1024), 2*1024*1024) // 2 MB line buffer
+		sc.Buffer(make([]byte, 16*1024*1024), 16*1024*1024) // 16 MB line buffer
 		stripped := 0
 		for sc.Scan() {
 			line := sc.Bytes()
@@ -385,14 +389,14 @@ func newMariaDBStripper(r io.Reader, logFn func(string)) io.Reader {
 }
 
 // isMariaDBDump does a quick check on the first few KB of a file to detect
-// whether it was produced by MariaDB's mysqldump.
+// whether it contains MariaDB-specific /*M! comments that need stripping.
 func isMariaDBDump(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
-	buf := make([]byte, 4096)
+	buf := make([]byte, 8192)
 	n, _ := f.Read(buf)
-	return bytes.Contains(buf[:n], []byte("MariaDB")) || bytes.Contains(buf[:n], []byte("/*M!"))
+	return bytes.Contains(buf[:n], []byte("/*M!"))
 }
