@@ -1,6 +1,6 @@
-# sitesync
+# sitesync v3
 
-Pull a remote website to your local development environment — database, files, and all. Built with Go and a full terminal UI.
+Pull a remote website to your local development environment — database, files, and all. A single Go binary with a full terminal UI.
 
 ```
   ⚡ sitesync
@@ -36,8 +36,12 @@ Any step can be skipped (`sql` or `files` mode). All steps are streamed live to 
 - **Color-coded logs** — commands, info, data, and timing are styled differently
 - **Per-step timing** and total elapsed time
 - **Connection info** — source, database, replacements, and transport details shown before sync starts
+- **MariaDB compatibility** — automatically strips `/*M!` comments from MariaDB dumps before importing into MySQL
+- **Trailing-slash safety** — source paths without a trailing `/` are normalised so rsync copies directory *contents*, not the directory itself
 
 Supports WordPress, Drupal, PrestaShop, SPIP, and any other PHP-serializing CMS.
+
+Works on **macOS** and **Linux** (amd64 / arm64). Can run on servers for server-to-server migration.
 
 ---
 
@@ -58,7 +62,7 @@ No PHP, no Bash runtime — a single static binary.
 ### Quick install (no Go required)
 
 ```bash
-curl -fsSL https://gitlab.quai13.net/teamtreize/sitesync/-/raw/main/install.sh | sh
+curl -fsSL https://gitlab.quai13.net/teamtreize/sitesync/-/raw/main/install.sh | bash
 ```
 
 This auto-detects your OS (macOS / Linux) and architecture (amd64 / arm64), downloads the correct binary, and installs it to `~/bin`. If no pre-built binary is available, it falls back to building from source (requires Go).
@@ -68,6 +72,8 @@ Then run the interactive setup:
 ```bash
 sitesync setup
 ```
+
+The setup wizard defaults the config directory to `~/.config/sitesync` — a clean XDG-compliant location that works well on both desktops and servers.
 
 ### Build from source
 
@@ -92,6 +98,10 @@ The `setup` command walks you through:
 3. Installing the binary to `~/bin` (or a custom path)
 4. Migrating any existing shell configs to TOML
 
+### Update
+
+Just re-run the install script or `git pull && make install`. Configs are never touched.
+
 ### Verify
 
 ```bash
@@ -105,12 +115,14 @@ sitesync version
 
 ### 1. Create a config
 
+Use the TUI editor (press `n` in the picker) or create one manually:
+
 ```bash
-mkdir -p etc/mysite
-cp sample/config.toml etc/mysite/config.toml
+mkdir -p $SITESYNC_ETC/mysite
+cp sample/config.toml $SITESYNC_ETC/mysite/config.toml
 ```
 
-Edit `etc/mysite/config.toml` with your remote server details, DB credentials, and find/replace pairs.
+Edit `config.toml` with your remote server details, DB credentials, and find/replace pairs.
 
 ### 2. Set up SSH key auth (recommended)
 
@@ -581,13 +593,6 @@ sitesync/
 │   │       ├── syncing/              # Screen 3: live progress + log
 │   │       └── editor/               # Screen 4: huh config wizard
 │   └── logger/logger.go              # Thread-safe log file writer
-├── etc/                              # Your configs live here (gitignored)
-│   └── mysite/
-│       ├── config.toml
-│       └── hook/
-│           ├── before/
-│           ├── between/
-│           └── after/
 ├── sample/
 │   ├── config.toml                   # Annotated reference config
 │   └── hook/                         # Ready-made hooks for common CMSes
@@ -601,8 +606,23 @@ sitesync/
 │           ├── prestashop-1.5-1.6.sh
 │           ├── spip.sh
 │           └── chown-after-synchro.sh
-├── log/                              # Log files (gitignored)
-└── tmp/                              # Temporary SQL dump files (gitignored)
+└── log/                              # Log files (gitignored)
+```
+
+### Runtime directories (inside `$SITESYNC_ETC`)
+
+```
+$SITESYNC_ETC/                        # e.g. ~/.config/sitesync
+├── mysite/
+│   ├── config.toml
+│   └── hook/
+│       ├── before/
+│       ├── between/
+│       └── after/
+├── another-site/
+│   └── config.toml
+├── tmp/                              # SQL dumps (auto-cleaned on success)
+└── log/                              # Log files
 ```
 
 ---
@@ -665,3 +685,5 @@ sitesync v3 is a full rewrite. The core behaviour is identical, but there are a 
 **Hook scripts are unchanged** — existing `hook/before/*.sh` and `hook/after/*.sh` scripts work without modification. They receive the same environment variables as before. The only difference is `$dst_path_to_php` is set to `echo` (a harmless no-op) since hooks no longer need to invoke PHP.
 
 **`--verbose` flag removed** — the TUI log panel shows everything in real time. Use `--no-tui` for script usage; all output goes to stdout.
+
+**Server-to-server** — v3 works on headless servers. Install with the curl script, set `SITESYNC_ETC`, and run with `--no-tui`.

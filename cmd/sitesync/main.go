@@ -15,7 +15,7 @@ import (
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
-var version = "3.0.0-dev"
+var version = "3.0.0"
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
