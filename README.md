@@ -551,11 +551,11 @@ sitesync replace "https://prod.example.com" "http://local.test" /path/to/dump.sq
 
 When a step fails, a prompt appears with three options:
 
-| Key | Action                              |
-| --- | ----------------------------------- |
-| `r` | Retry the failed step               |
-| `c` | Skip the step and continue          |
-| `q` | Abort the entire sync               |
+| Key | Action                     |
+| --- | -------------------------- |
+| `r` | Retry the failed step      |
+| `c` | Skip the step and continue |
+| `q` | Abort the entire sync      |
 
 ### Config editor
 
