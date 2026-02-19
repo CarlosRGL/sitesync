@@ -1,0 +1,145 @@
+# sitesync — annotated sample config
+# Copy this file to etc/mysite/config.toml and fill in your values.
+# Then run: sitesync --conf=mysite
+
+# ─── Site identity ────────────────────────────────────────────────────────────
+[site]
+name        = "mysite"          # Display name shown in the TUI picker
+description = "My WordPress site on example.com"
+
+# ─── Source (remote / production) ────────────────────────────────────────────
+[source]
+# SSH connection details
+server  = "www.example.com"     # Remote hostname or IP
+user    = "deploy"              # SSH user
+port    = 22                    # SSH port (default 22)
+
+# How to obtain the SQL dump:
+#   remote_base  → ssh into the server and run mysqldump there (most common)
+#   local_base   → run mysqldump against a local DB (e.g. staging on same machine)
+#   remote_file  → scp an existing .sql[.gz] file from the remote server
+#   local_file   → use an existing local .sql[.gz] file
+type     = "remote_base"
+file     = ""                   # Full path required when type is *_file
+compress = true                 # gzip the dump on-the-fly (remote_base/local_base)
+
+# Source DB credentials (used when type = remote_base or local_base)
+# Leave blank to rely on ~/.my.cnf on the remote server
+db_hostname = "localhost"
+db_port     = ""
+db_name     = "mysite_prod"
+db_user     = "db_user"
+db_password = "db_password"
+
+# Source site URL helpers (used to build the auto-suggested replace pairs below)
+site_protocol = "https://"
+site_host     = "www.example.com"
+site_slug     = ""              # Sub-path if the site lives at a URL sub-directory
+files_root    = "/var/www/mysite"
+
+# Remote tool paths (override if the binary isn't on $PATH on the remote server)
+path_to_mysqldump = "mysqldump"
+remote_nice       = ""          # e.g. "ionice -c3 nice" to lower remote I/O priority
+
+# ─── Destination (local / development) ───────────────────────────────────────
+[destination]
+# Destination site URL helpers
+site_protocol = "http://"
+site_host     = "mysite.local"
+site_slug     = ""
+files_root    = "/Users/me/Sites/mysite"
+
+# Local DB credentials
+db_hostname = "localhost"
+db_port     = ""
+db_name     = "mysite_dev"
+db_user     = "root"
+db_password = ""
+
+# Local tool paths
+path_to_mysql     = "mysql"
+path_to_mysqldump = "mysqldump"
+path_to_rsync     = "rsync"
+path_to_lftp      = "lftp"
+local_nice        = ""          # e.g. "ionice -c3 nice"
+
+# ─── Database dump options ────────────────────────────────────────────────────
+[database]
+sql_options_structure = "--default-character-set=utf8"
+sql_options_extra     = "--routines --skip-triggers"
+
+# Tables to exclude from the dump entirely (useful for large cache tables)
+ignore_tables = [
+  # "cache_data",
+  # "search_index",
+]
+
+# ─── Find / Replace pairs ─────────────────────────────────────────────────────
+# Applied to the SQL dump in order, before import.
+# The replace engine is PHP-serialize-aware: it correctly adjusts s:N: byte
+# counts when the replacement string has a different length.
+
+[[replace]]
+search  = "https://www.example.com"
+replace = "http://mysite.local"
+
+[[replace]]
+search  = "https://example.com"
+replace = "http://mysite.local"
+
+[[replace]]
+# Absolute file paths stored in the DB (common in WordPress uploads meta)
+search  = "/var/www/mysite"
+replace = "/Users/me/Sites/mysite"
+
+# [[replace]]
+# Rewrite DEFINER clauses in stored procedures/triggers so they use a local user
+# search  = " DEFINER=`prod_user`@`localhost`"
+# replace = " DEFINER=`root`@`localhost`"
+
+# ─── File sync pairs ──────────────────────────────────────────────────────────
+# Each pair defines a remote source and local destination for rsync/lftp.
+# Multiple pairs are supported.
+
+[[sync]]
+src = "/var/www/mysite"
+dst = "/Users/me/Sites/mysite"
+
+# ─── Transport ────────────────────────────────────────────────────────────────
+[transport]
+# type = "rsync"   (default)
+# type = "lftp"    (use LFTP mirror instead of rsync)
+type          = "rsync"
+rsync_options = "-uvrpztl"      # Standard rsync flags; --delete is intentionally omitted
+
+# Patterns to exclude from file sync
+exclude = [
+  "/sitesync/",
+  "/stats/",
+  "/.git/",
+  "/.svn/",
+  "/.DS_Store",
+  "/node_modules/",
+]
+
+# LFTP options (only used when type = "lftp")
+[transport.lftp]
+password        = ""
+port            = 21
+connect_options = ""            # e.g. "set ftp:ssl-allow no;"
+mirror_options  = "--parallel=16 --verbose --only-newer"
+
+# ─── Hooks ────────────────────────────────────────────────────────────────────
+# Hook scripts live at: etc/mysite/hook/{before,between,after}/*.sh
+# They are executed in alphabetical order within each phase.
+# All config variables are exported as environment variables so scripts can
+# reference $src_server, $dst_files_root, $sqlfile, etc.
+#
+# See sample/hook/ for examples (WordPress, Drupal, PrestaShop, SPIP).
+
+[hooks]
+path = "hook"   # relative to the etc/mysite/ directory
+
+# ─── Logging ─────────────────────────────────────────────────────────────────
+[logging]
+file = "log/sitesync.log"   # relative to the project root; or absolute path
