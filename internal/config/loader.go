@@ -201,8 +201,7 @@ func LogFile(cfg *Config) string {
 	return filepath.Join(root, lf)
 }
 
-// TmpDir returns the absolute path to the temp directory.
+// TmpDir returns the absolute path to the temp directory (inside the etc dir).
 func TmpDir() string {
-	root := filepath.Dir(etcDir())
-	return filepath.Join(root, "tmp")
+	return filepath.Join(etcDir(), "tmp")
 }

@@ -42,8 +42,8 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	currentEtc := os.Getenv("SITESYNC_ETC")
 	defaultEtc := currentEtc
 	if defaultEtc == "" {
-		cwd, _ := os.Getwd()
-		defaultEtc = filepath.Join(cwd, "etc")
+		home, _ := os.UserHomeDir()
+		defaultEtc = filepath.Join(home, ".config", "sitesync")
 	}
 
 	fmt.Printf("%s1)%s Config directory (SITESYNC_ETC)\n", bold, reset)
