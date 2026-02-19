@@ -37,7 +37,7 @@ Any step can be skipped (`sql` or `files` mode). All steps are streamed live to 
 - **Per-step timing** and total elapsed time
 - **Connection info** — source, database, replacements, and transport details shown before sync starts
 - **MariaDB compatibility** — automatically strips `/*M!` comments from MariaDB dumps before importing into MySQL
-- **Trailing-slash safety** — source paths without a trailing `/` are normalised so rsync copies directory *contents*, not the directory itself
+- **Trailing-slash safety** — source paths without a trailing `/` are normalised so rsync copies directory _contents_, not the directory itself
 
 Supports WordPress, Drupal, PrestaShop, SPIP, and any other PHP-serializing CMS.
 

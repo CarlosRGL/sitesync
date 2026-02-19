@@ -35,7 +35,7 @@ var rootCmd = &cobra.Command{
 	Short: "Sync a remote website to your local environment",
 	Long: `sitesync synchronises a remote website (database + files) to your local
 development environment. Running without arguments opens the interactive TUI.`,
-	Args: cobra.MaximumNArgs(1),
+	Args:      cobra.MaximumNArgs(1),
 	ValidArgs: []string{"sql", "files"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opStr := ""
