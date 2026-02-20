@@ -3,7 +3,7 @@
 # sitesync installer
 #
 # Usage:
-#   curl -fsSL https://gitlab.quai13.net/teamtreize/sitesync/-/raw/main/install.sh | sh
+#   curl -fsSL https://github.com/CarlosRGL/sitesync/releases/latest/download/install.sh | sh
 #
 # Or download manually and run:
 #   sh install.sh
@@ -11,7 +11,8 @@
 set -e
 
 # ── Config ───────────────────────────────────────────────────────────────────
-REPO_URL="https://gitlab.quai13.net/teamtreize/sitesync"
+GITHUB_REPO="https://github.com/CarlosRGL/sitesync"
+GITLAB_REPO="https://gitlab.quai13.net/teamtreize/sitesync"
 BINARY="sitesync"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/bin}"
 
@@ -66,7 +67,7 @@ check_deps() {
 
 # ── Download or build ───────────────────────────────────────────────────────
 get_binary() {
-    DOWNLOAD_URL="${REPO_URL}/-/releases/permalink/latest/downloads/${BINARY}-${PLATFORM}"
+    DOWNLOAD_URL="${GITHUB_REPO}/releases/latest/download/${BINARY}-${PLATFORM}"
 
     info "Downloading ${BINARY} for ${PLATFORM}..."
 
@@ -93,9 +94,9 @@ get_binary() {
 
   To install Go: https://go.dev/dl/
 
-  Or ask your team to run 'make release' and upload binaries
-  to a GitLab release at:
-    ${REPO_URL}/-/releases
+  Or ask your team to run 'make release publish' to upload binaries
+  to a GitHub release at:
+    ${GITHUB_REPO}/releases
 
   Then re-run this installer."
 }
@@ -103,7 +104,7 @@ get_binary() {
 build_from_source() {
     TMPDIR_SRC=$(mktemp -d)
     info "Cloning repository..."
-    git clone --depth 1 "${REPO_URL}.git" "$TMPDIR_SRC" 2>/dev/null || \
+    git clone --depth 1 "${GITLAB_REPO}.git" "$TMPDIR_SRC" 2>/dev/null || \
         git clone --depth 1 "ssh://git@gitlab.quai13.net:2221/teamtreize/sitesync.git" "$TMPDIR_SRC"
 
     cd "$TMPDIR_SRC"
