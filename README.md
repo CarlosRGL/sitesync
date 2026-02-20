@@ -61,7 +61,7 @@ No PHP, no Bash runtime — a single static binary.
 ### Quick install (no Go required)
 
 ```bash
-curl -fsSL https://gitlab.quai13.net/teamtreize/sitesync/-/raw/main/install.sh | bash
+curl -fsSL https://github.com/CarlosRGL/sitesync/releases/latest/download/install.sh | sh
 ```
 
 This auto-detects your OS (macOS / Linux) and architecture (amd64 / arm64), downloads the correct binary, and installs it to `~/bin`. If no pre-built binary is available, it falls back to building from source (requires Go).
@@ -77,7 +77,7 @@ The setup wizard defaults the config directory to `~/.config/sitesync` — a cle
 ### Build from source
 
 ```bash
-git clone ssh://git@gitlab.quai13.net:2221/teamtreize/sitesync.git
+git clone https://github.com/CarlosRGL/sitesync.git
 cd sitesync
 make install          # builds and copies to ~/bin/sitesync
 sitesync setup        # interactive environment setup
@@ -86,8 +86,8 @@ sitesync setup        # interactive environment setup
 ### Cross-compile release binaries
 
 ```bash
-make release          # builds for darwin/amd64, darwin/arm64, linux/amd64, linux/arm64
-ls dist/              # upload these to GitLab releases
+make release publish  # builds for darwin/amd64, darwin/arm64, linux/amd64, linux/arm64
+                      # and uploads to GitHub releases
 ```
 
 The `setup` command walks you through:
