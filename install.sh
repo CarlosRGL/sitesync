@@ -125,16 +125,53 @@ install_binary() {
     ok "Installed to ${INSTALL_DIR}/${BINARY}"
 }
 
-# ── PATH check ───────────────────────────────────────────────────────────────
-check_path() {
+# ── PATH patch ───────────────────────────────────────────────────────────────
+detect_shell_profile() {
+    if [ -n "$SHELL" ]; then
+        case "$SHELL" in
+            */zsh)
+                for f in "$HOME/.zshrc" "$HOME/.zprofile"; do
+                    [ -f "$f" ] && printf "%s" "$f" && return
+                done ;;
+            */bash)
+                for f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+                    [ -f "$f" ] && printf "%s" "$f" && return
+                done ;;
+            */fish)
+                f="$HOME/.config/fish/config.fish"
+                [ -f "$f" ] && printf "%s" "$f" && return ;;
+        esac
+    fi
+    # Fallback
+    for f in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile"; do
+        [ -f "$f" ] && printf "%s" "$f" && return
+    done
+}
+
+patch_path() {
     case ":$PATH:" in
-        *":${INSTALL_DIR}:"*) ;;
-        *)
-            warn "${INSTALL_DIR} is not in your PATH"
-            printf "  Add this to your shell profile:\n"
-            printf "  ${CYAN}export PATH=\"%s:\$PATH\"${RESET}\n" "$INSTALL_DIR"
-            ;;
+        *":${INSTALL_DIR}:"*)
+            return 0 ;;
     esac
+
+    SHELL_PROFILE=$(detect_shell_profile)
+
+    if [ -z "$SHELL_PROFILE" ]; then
+        warn "${INSTALL_DIR} is not in your PATH"
+        printf "  Add this to your shell profile:\n"
+        printf "  ${CYAN}export PATH=\"%s:\$PATH\"${RESET}\n" "$INSTALL_DIR"
+        return
+    fi
+
+    # Already patched in file?
+    if grep -qF "$INSTALL_DIR" "$SHELL_PROFILE" 2>/dev/null; then
+        ok "${INSTALL_DIR} already referenced in $(basename "$SHELL_PROFILE")"
+        return
+    fi
+
+    printf "\n# Added by sitesync installer\nexport PATH=\"%s:\$PATH\"\n" "$INSTALL_DIR" >> "$SHELL_PROFILE"
+    ok "Added ${INSTALL_DIR} to PATH in $(basename "$SHELL_PROFILE")"
+    printf "  ${YELLOW}→ Reload with: source %s${RESET}\n" "$SHELL_PROFILE"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -153,7 +190,7 @@ main() {
     install_binary
     printf "\n"
 
-    check_path
+    patch_path
 
     printf "\n${GREEN}${BOLD}── Installed! ──${RESET}\n"
     printf "  Run ${CYAN}${BINARY} setup${RESET} to configure your environment.\n"

@@ -105,7 +105,7 @@ Just re-run the install script or `git pull && make install`. Configs are never 
 
 ```bash
 sitesync version
-# sitesync 3.1.0
+# sitesync 3.3.0
 ```
 
 ---

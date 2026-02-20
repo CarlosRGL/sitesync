@@ -168,6 +168,41 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// PATH check / patch for the installed bin dir
+	if !isDirInPath(binDir) {
+		shellFile2 := detectShellProfile()
+		pathLine := fmt.Sprintf("export PATH=%q", binDir+":$PATH")
+		if shellFile2 != "" {
+			alreadyPatched := false
+			if data, err := os.ReadFile(shellFile2); err == nil {
+				alreadyPatched = strings.Contains(string(data), binDir)
+			}
+			if alreadyPatched {
+				fmt.Printf("   %s✔%s %s already referenced in %s\n\n", green, reset, binDir, filepath.Base(shellFile2))
+			} else {
+				fmt.Printf("   %s⚠%s  %s is not in your PATH\n", yellow, reset, binDir)
+				fmt.Printf("   Add to %s? [Y/n]: ", filepath.Base(shellFile2))
+				ans, _ := reader.ReadString('\n')
+				ans = strings.TrimSpace(strings.ToLower(ans))
+				if ans == "" || ans == "y" || ans == "yes" {
+					if err := appendToFile(shellFile2, "\n# Added by sitesync setup\n"+pathLine+"\n"); err != nil {
+						fmt.Printf("   %s⚠%s  Could not write to %s: %v\n", yellow, reset, shellFile2, err)
+						fmt.Printf("   Add manually: %s\n\n", pathLine)
+					} else {
+						fmt.Printf("   %s✔%s Added to %s — reload with: source %s\n\n", green, reset, filepath.Base(shellFile2), shellFile2)
+					}
+				} else {
+					fmt.Printf("   %sSkipped.%s Add manually: %s\n\n", dim, reset, pathLine)
+				}
+			}
+		} else {
+			fmt.Printf("   %s⚠%s  %s is not in your PATH\n", yellow, reset, binDir)
+			fmt.Printf("   Add manually: %s%s%s\n\n", cyan, pathLine, reset)
+		}
+	} else {
+		fmt.Printf("   %s✔%s %s is in your PATH\n\n", green, reset, binDir)
+	}
+
 	// ── Step 4: Migrate configs ─────────────────────────────────────────────
 	fmt.Printf("%s4)%s Migrate shell configs\n", bold, reset)
 
@@ -291,6 +326,15 @@ func defaultBinDir() string {
 
 	// Default to ~/bin
 	return filepath.Join(home, "bin")
+}
+
+func isDirInPath(dir string) bool {
+	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+		if p == dir {
+			return true
+		}
+	}
+	return false
 }
 
 func appendToFile(path, content string) error {
