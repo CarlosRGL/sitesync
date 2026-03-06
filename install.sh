@@ -15,6 +15,8 @@ GITHUB_REPO="https://github.com/CarlosRGL/sitesync"
 GITLAB_REPO="https://gitlab.quai13.net/teamtreize/sitesync"
 BINARY="sitesync"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/bin}"
+LATEST_TAG=""
+CURRENT_VERSION=""
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -33,6 +35,40 @@ info()  { printf "${CYAN}▸${RESET} %s\n" "$1"; }
 ok()    { printf "${GREEN}✔${RESET} %s\n" "$1"; }
 warn()  { printf "${YELLOW}⚠${RESET} %s\n" "$1"; }
 fail()  { printf "${RED}✘${RESET} %s\n" "$1"; exit 1; }
+
+fetch_latest_version() {
+    api_url="https://api.github.com/repos/CarlosRGL/sitesync/releases/latest"
+    LATEST_TAG=$(curl -fsSL "$api_url" 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+}
+
+detect_current_version() {
+    current_bin=""
+    if [ -x "${INSTALL_DIR}/${BINARY}" ]; then
+        current_bin="${INSTALL_DIR}/${BINARY}"
+    else
+        current_bin=$(command -v "$BINARY" 2>/dev/null || true)
+    fi
+
+    if [ -n "$current_bin" ] && [ -x "$current_bin" ]; then
+        CURRENT_VERSION=$($current_bin version 2>/dev/null | awk 'NR==1 {print $2}')
+    fi
+}
+
+show_version_plan() {
+    target="${LATEST_TAG:-unknown}"
+    if [ -n "$CURRENT_VERSION" ]; then
+        info "Current version: ${CURRENT_VERSION}"
+        info "Target version: ${target}"
+        if [ "$CURRENT_VERSION" = "${LATEST_TAG#v}" ] || [ "$CURRENT_VERSION" = "$LATEST_TAG" ]; then
+            info "Reinstalling ${CURRENT_VERSION}"
+        else
+            info "Upgrading ${CURRENT_VERSION} -> ${target}"
+        fi
+    else
+        info "Current version: not installed"
+        info "Target version: ${target}"
+    fi
+}
 
 # ── Detect OS / arch ────────────────────────────────────────────────────────
 detect_platform() {
@@ -180,6 +216,9 @@ main() {
 
     detect_platform
     info "Platform: ${PLATFORM}"
+    fetch_latest_version
+    detect_current_version
+    show_version_plan
     printf "\n"
 
     info "Checking dependencies..."

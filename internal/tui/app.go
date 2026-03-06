@@ -35,17 +35,19 @@ type AppModel struct {
 
 	// Transient state between screens
 	selectedConf string
+	updateNotice string
 
 	width  int
 	height int
 }
 
 // New creates an initialised AppModel, pre-selecting confName if non-empty.
-func New(entries []config.ConfigEntry, preselect string, log logger.Logger) AppModel {
+func New(entries []config.ConfigEntry, preselect string, log logger.Logger, updateNotice string) AppModel {
 	m := AppModel{
-		screen: screenPicker,
-		picker: picker.New(entries),
-		log:    log,
+		screen:       screenPicker,
+		picker:       picker.New(entries),
+		log:          log,
+		updateNotice: updateNotice,
 	}
 	// If a config name was passed on the CLI, skip straight to op-select.
 	if preselect != "" {
@@ -210,9 +212,17 @@ func (m AppModel) View() string {
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header,
+		m.renderUpdateNotice(),
 		"",
 		body,
 	)
+}
+
+func (m AppModel) renderUpdateNotice() string {
+	if m.updateNotice == "" {
+		return ""
+	}
+	return styles.Warning.Render(m.updateNotice)
 }
 
 // ── Op helper exposed for headless use ───────────────────────────────────────

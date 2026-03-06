@@ -15,7 +15,7 @@ import (
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
-var version = "3.3.2"
+var version = "3.3.3"
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
@@ -38,6 +38,8 @@ development environment. Running without arguments opens the interactive TUI.`,
 	Args:      cobra.MaximumNArgs(1),
 	ValidArgs: []string{"sql", "files"},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		notice := latestUpdateNotice()
+
 		opStr := ""
 		if len(args) > 0 {
 			opStr = args[0]
@@ -45,10 +47,13 @@ development environment. Running without arguments opens the interactive TUI.`,
 		op := tui.ParseOp(opStr)
 
 		if flagNoTUI || flagConf != "" && len(args) > 0 {
+			if notice != "" {
+				fmt.Fprintln(os.Stderr, notice)
+			}
 			return runHeadless(flagConf, op)
 		}
 
-		return runTUI(flagConf)
+		return runTUI(flagConf, notice)
 	},
 }
 
@@ -122,14 +127,14 @@ func init() {
 
 // ── TUI runner ───────────────────────────────────────────────────────────────
 
-func runTUI(preselect string) error {
+func runTUI(preselect, updateNotice string) error {
 	entries, err := config.ListConfigs()
 	if err != nil {
 		return fmt.Errorf("listing configs: %w", err)
 	}
 
 	log := logger.Discard()
-	m := tui.New(entries, preselect, log)
+	m := tui.New(entries, preselect, log, updateNotice)
 
 	p := tea.NewProgram(m,
 		tea.WithAltScreen(),
