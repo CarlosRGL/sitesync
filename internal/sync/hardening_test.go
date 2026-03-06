@@ -2,6 +2,7 @@ package sync
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -140,5 +141,23 @@ func TestBuildLFTPScriptRedactsPasswordInLogs(t *testing.T) {
 	}
 	if !strings.Contains(logScript, "[REDACTED]") {
 		t.Fatalf("log script did not show redaction marker: %s", logScript)
+	}
+}
+
+func TestStreamCmdReturnsTrailingOutputOnFailure(t *testing.T) {
+	ctx := context.Background()
+	eventCh := make(chan Event, 16)
+	cmd := exec.CommandContext(ctx, "sh", "-c", "echo first >&2; echo second >&2; exit 1")
+
+	err := streamCmd(ctx, eventCh, 4, cmd, true)
+	if err == nil {
+		t.Fatal("expected streamCmd to fail")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "last output:") {
+		t.Fatalf("expected error to contain trailing output, got: %s", msg)
+	}
+	if !strings.Contains(msg, "first") || !strings.Contains(msg, "second") {
+		t.Fatalf("expected stderr lines in error, got: %s", msg)
 	}
 }

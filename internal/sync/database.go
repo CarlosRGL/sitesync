@@ -114,7 +114,10 @@ func ImportDump(ctx context.Context, cfg *config.Config, dumpPath string, eventC
 	// Log the command with password redacted.
 	sendLog(fmt.Sprintf("  $ %s %s", mysqlBin(cfg), redactArgs(mysqlArgs)))
 
-	return streamCmd(ctx, eventCh, step, mysql, true)
+	if err := streamCmd(ctx, eventCh, step, mysql, true); err != nil {
+		return fmt.Errorf("mysql import failed for %s: %w", filepath.Base(dumpPath), err)
+	}
+	return nil
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -344,13 +347,16 @@ func streamCmd(ctx context.Context, eventCh chan<- Event, step int, cmd *exec.Cm
 	}
 
 	var wg sync.WaitGroup
+	tail := newLineTail(8)
 
 	scan := func(r io.Reader) {
 		defer wg.Done()
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 512*1024), 512*1024)
 		for sc.Scan() {
-			sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step, Message: sc.Text()})
+			line := sc.Text()
+			tail.Add(line)
+			sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step, Message: line})
 		}
 	}
 
@@ -365,7 +371,42 @@ func streamCmd(ctx context.Context, eventCh chan<- Event, step int, cmd *exec.Cm
 
 	err := cmd.Wait()
 	wg.Wait() // drain all log lines before returning
+	if err != nil {
+		if lines := tail.Lines(); len(lines) > 0 {
+			return fmt.Errorf("%w\nlast output:\n%s", err, strings.Join(lines, "\n"))
+		}
+	}
 	return err
+}
+
+type lineTail struct {
+	mu    sync.Mutex
+	limit int
+	lines []string
+}
+
+func newLineTail(limit int) *lineTail {
+	return &lineTail{limit: limit}
+}
+
+func (lt *lineTail) Add(line string) {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	lt.lines = append(lt.lines, line)
+	if len(lt.lines) > lt.limit {
+		lt.lines = lt.lines[len(lt.lines)-lt.limit:]
+	}
+}
+
+func (lt *lineTail) Lines() []string {
+	lt.mu.Lock()
+	defer lt.mu.Unlock()
+	if len(lt.lines) == 0 {
+		return nil
+	}
+	out := make([]string, len(lt.lines))
+	copy(out, lt.lines)
+	return out
 }
 
 // DumpFilePath returns the expected path for the SQL dump temp file.
