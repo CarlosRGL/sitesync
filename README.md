@@ -105,7 +105,7 @@ Just re-run the install script or `git pull && make install`. Configs are never 
 
 ```bash
 sitesync version
-# sitesync 3.3.0
+# sitesync 3.3.1
 ```
 
 ---
@@ -372,7 +372,7 @@ Scripts run in alphabetical order within each phase. Prefix with numbers to cont
 
 ### Available environment variables
 
-Every config field is exported as an environment variable so hook scripts can reference them:
+Core hook variables are exported as environment variables so hook scripts can reference them. For legacy compatibility, `src_dbpass` and `dst_dbpass` are only exported when the hook script text explicitly references those variable names.
 
 | Variable                        | Value                               |
 | ------------------------------- | ----------------------------------- |
@@ -383,12 +383,15 @@ Every config field is exported as an environment variable so hook scripts can re
 | `src_site_host`                 | Remote site hostname                |
 | `src_site_protocol`             | Remote site protocol                |
 | `src_site_slug`                 | Remote site sub-path                |
+| `src_root_slug`                 | Legacy alias for `src_site_slug`    |
 | `src_files_root`                | Remote files root path              |
 | `src_dbname`                    | Remote DB name                      |
 | `src_dbuser`                    | Remote DB user                      |
 | `src_dbhostname`                | Remote DB hostname                  |
 | `dst_site_host`                 | Local site hostname                 |
 | `dst_site_protocol`             | Local site protocol                 |
+| `dst_site_slug`                 | Local site sub-path                 |
+| `dst_root_slug`                 | Legacy alias for `dst_site_slug`    |
 | `dst_files_root`                | Local files root path               |
 | `dst_dbname`                    | Local DB name                       |
 | `dst_dbuser`                    | Local DB user                       |
@@ -396,6 +399,13 @@ Every config field is exported as an environment variable so hook scripts can re
 | `dst_path_to_mysql`             | Path to `mysql` binary              |
 | `dst_path_to_rsync`             | Path to `rsync` binary              |
 | `dst_path_to_resilient_replace` | sitesync's own `replace` subcommand |
+
+Legacy secret variables:
+
+- `src_dbpass`
+- `dst_dbpass`
+
+These are exposed only on demand when a hook script explicitly references them.
 
 ### Example hooks
 
@@ -412,7 +422,7 @@ echo "$SQL" >> "$sqlfile"
 
 ```bash
 #!/bin/bash
-$dst_path_to_resilient_replace -i \
+$dst_path_to_resilient_replace \
   "RewriteCond %{HTTP_HOST} \^${src_site_host}\$" \
   "RewriteCond %{HTTP_HOST} ^${dst_site_host}$" \
   "${dst_files_root}/.htaccess"
@@ -692,7 +702,7 @@ sitesync v3 is a full rewrite. The core behaviour is identical, but there are a 
 
 **No PHP required** — `bin/resilient_replace` is no longer used. The Go binary handles everything. The `$dst_path_to_resilient_replace` env variable passed to hooks now points to `sitesync replace`.
 
-**Hook scripts are unchanged** — existing `hook/before/*.sh` and `hook/after/*.sh` scripts work without modification. They receive the same environment variables as before. The only difference is `$dst_path_to_php` is set to `echo` (a harmless no-op) since hooks no longer need to invoke PHP.
+**Hook scripts are unchanged for normal use** — existing `hook/before/*.sh` and `hook/after/*.sh` scripts still work. Non-secret variables are always exported. Legacy password variables such as `$src_dbpass` and `$dst_dbpass` are only exported when a hook script explicitly references them. For older wrappers like `$dst_path_to_php $dst_path_to_resilient_replace ...`, `$dst_path_to_php` is left empty so the `sitesync replace` command still runs.
 
 **`--verbose` flag removed** — the TUI log panel shows everything in real time. Use `--no-tui` for script usage; all output goes to stdout.
 

@@ -88,8 +88,25 @@ func ListConfigs() ([]ConfigEntry, error) {
 	return configs, nil
 }
 
+func validateConfigName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return fmt.Errorf("config name cannot be empty")
+	}
+	if trimmed == "." || trimmed == ".." {
+		return fmt.Errorf("invalid config name %q", name)
+	}
+	if strings.Contains(trimmed, "/") || strings.Contains(trimmed, "\\") {
+		return fmt.Errorf("config name %q must not contain path separators", name)
+	}
+	return nil
+}
+
 // Load reads the named config from etc/{name}/config.toml.
 func Load(name string) (*Config, error) {
+	if err := validateConfigName(name); err != nil {
+		return nil, err
+	}
 	cfgPath := filepath.Join(etcDir(), name, "config.toml")
 	return LoadFromPath(cfgPath)
 }
@@ -158,12 +175,15 @@ func resolveConfigVariables(cfg *Config) {
 
 // Save writes cfg to etc/{name}/config.toml, creating directories as needed.
 func Save(name string, cfg *Config) error {
+	if err := validateConfigName(name); err != nil {
+		return err
+	}
 	dir := filepath.Join(etcDir(), name)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 	path := filepath.Join(dir, "config.toml")
-	f, err := os.Create(path)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("creating config file: %w", err)
 	}

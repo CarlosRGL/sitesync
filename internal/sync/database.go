@@ -147,7 +147,10 @@ func scpFetch(ctx context.Context, cfg *config.Config, dumpPath string, log func
 }
 
 func dumpLocalDB(ctx context.Context, cfg *config.Config, dumpPath string, log func(string)) error {
-	args := buildDumpArgs(cfg, false)
+	args, err := buildDumpArgs(cfg, false)
+	if err != nil {
+		return err
+	}
 	return runDump(ctx, cfg, args, dumpPath, log)
 }
 
@@ -158,17 +161,30 @@ func dumpRemoteDB(ctx context.Context, cfg *config.Config, dumpPath string, log 
 		dumpBin = "mysqldump"
 	}
 	remoteParts := []string{dumpBin}
-	remoteParts = append(remoteParts, buildDumpArgs(cfg, true)...)
-	remoteCmd := strings.Join(remoteParts, " ")
+	remoteArgs, err := buildDumpArgs(cfg, true)
+	if err != nil {
+		return err
+	}
+	remoteParts = append(remoteParts, remoteArgs...)
+	quoted := make([]string, len(remoteParts))
+	for i, part := range remoteParts {
+		quoted[i] = shellQuote(part)
+	}
+	remoteCmd := strings.Join(quoted, " ")
 
 	sshArgs := []string{
 		"-p", fmt.Sprintf("%d", cfg.Source.Port),
 		fmt.Sprintf("%s@%s", cfg.Source.User, cfg.Source.Server),
 		remoteCmd,
 	}
-	log(fmt.Sprintf("  $ ssh %s", strings.Join(sshArgs, " ")))
+	log(fmt.Sprintf("  $ ssh -p %d %s@%s %s %s",
+		cfg.Source.Port,
+		cfg.Source.User,
+		cfg.Source.Server,
+		dumpBin,
+		redactArgs(remoteParts[1:])))
 
-	out, err := os.Create(dumpPath)
+	out, err := os.OpenFile(dumpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create dump file: %w", err)
 	}
@@ -203,9 +219,9 @@ func runDump(ctx context.Context, cfg *config.Config, args []string, dumpPath st
 	if dumpBin == "" {
 		dumpBin = "mysqldump"
 	}
-	log(fmt.Sprintf("  $ %s %s", dumpBin, strings.Join(args, " ")))
+	log(fmt.Sprintf("  $ %s %s", dumpBin, redactArgs(args)))
 
-	out, err := os.Create(dumpPath)
+	out, err := os.OpenFile(dumpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create dump file: %w", err)
 	}
@@ -235,14 +251,22 @@ func runDump(ctx context.Context, cfg *config.Config, args []string, dumpPath st
 	return err
 }
 
-func buildDumpArgs(cfg *config.Config, remote bool) []string {
+func buildDumpArgs(cfg *config.Config, remote bool) ([]string, error) {
 	var args []string
 
 	if cfg.Database.SQLOptionsStructure != "" {
-		args = append(args, strings.Fields(cfg.Database.SQLOptionsStructure)...)
+		var err error
+		args, err = appendSplitArgs(args, cfg.Database.SQLOptionsStructure)
+		if err != nil {
+			return nil, fmt.Errorf("parse sql_options_structure: %w", err)
+		}
 	}
 	if cfg.Database.SQLOptionsExtra != "" {
-		args = append(args, strings.Fields(cfg.Database.SQLOptionsExtra)...)
+		var err error
+		args, err = appendSplitArgs(args, cfg.Database.SQLOptionsExtra)
+		if err != nil {
+			return nil, fmt.Errorf("parse sql_options_extra: %w", err)
+		}
 	}
 
 	src := cfg.Source
@@ -264,7 +288,7 @@ func buildDumpArgs(cfg *config.Config, remote bool) []string {
 		args = append(args, src.DBName)
 	}
 	_ = remote // reserved for future use (e.g. --compress flag differentiation)
-	return args
+	return args, nil
 }
 
 func buildMySQLArgs(cfg *config.Config) []string {

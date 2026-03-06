@@ -15,7 +15,7 @@ import (
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
-var version = "3.3.0"
+var version = "3.3.1"
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
@@ -61,10 +61,21 @@ var versionCmd = &cobra.Command{
 }
 
 var replaceCmd = &cobra.Command{
-	Use:   "replace <search> <replace> <file>",
+	Use:   "replace [-i] <search> <replace> <file>",
 	Short: "PHP serialize-aware find/replace on a file",
-	Args:  cobra.ExactArgs(3),
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 3 {
+			return nil
+		}
+		if len(args) == 4 && args[0] == "-i" {
+			return nil
+		}
+		return cobra.ExactArgs(3)(cmd, args)
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 4 && args[0] == "-i" {
+			args = args[1:]
+		}
 		return syncsvc.ResilientReplaceFile(args[0], args[1], args[2], syncsvc.ReplaceOptions{})
 	},
 }

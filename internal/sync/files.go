@@ -37,21 +37,24 @@ func syncRsync(ctx context.Context, cfg *config.Config, eventCh chan<- Event, st
 
 	total := len(cfg.Sync)
 	for idx, pair := range cfg.Sync {
-		args := buildRsyncArgs(cfg, pair)
+		args, err := buildRsyncArgs(cfg, pair)
+		if err != nil {
+			return err
+		}
 		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step,
 			Message: fmt.Sprintf("  $ %s %s", rsyncBin, strings.Join(args, " "))})
 
 		cmd := exec.CommandContext(ctx, rsyncBin, args...)
 		baseProgress := float64(idx) / float64(total)
 		sliceSize := 1.0 / float64(total)
-		if err := streamCmdWithProgress(ctx, eventCh, step, cmd, baseProgress, sliceSize); err != nil {
+		if err = streamCmdWithProgress(ctx, eventCh, step, cmd, baseProgress, sliceSize); err != nil {
 			return fmt.Errorf("rsync %s → %s: %w", pair.Src, pair.Dst, err)
 		}
 	}
 	return nil
 }
 
-func buildRsyncArgs(cfg *config.Config, pair config.SyncPair) []string {
+func buildRsyncArgs(cfg *config.Config, pair config.SyncPair) ([]string, error) {
 	t := cfg.Transport
 	src := cfg.Source
 
@@ -59,7 +62,10 @@ func buildRsyncArgs(cfg *config.Config, pair config.SyncPair) []string {
 	if opts == "" {
 		opts = "-uvrpztl"
 	}
-	args := strings.Fields(opts)
+	args, err := splitCommandLine(opts)
+	if err != nil {
+		return nil, fmt.Errorf("parse rsync_options: %w", err)
+	}
 
 	// SSH transport options.
 	sshOpt := fmt.Sprintf("ssh -p %d", src.Port)
@@ -82,7 +88,7 @@ func buildRsyncArgs(cfg *config.Config, pair config.SyncPair) []string {
 	remoteSrc := fmt.Sprintf("%s@%s:%s", src.User, src.Server, srcPath)
 	args = append(args, remoteSrc, dstPath)
 
-	return args
+	return args, nil
 }
 
 func syncLFTP(ctx context.Context, cfg *config.Config, eventCh chan<- Event, step int) error {
@@ -94,11 +100,12 @@ func syncLFTP(ctx context.Context, cfg *config.Config, eventCh chan<- Event, ste
 	for _, pair := range cfg.Sync {
 		script, logScript := buildLFTPScript(cfg, pair)
 		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step,
-			Message: fmt.Sprintf("  $ %s -c '...'", lftpBin)})
+			Message: fmt.Sprintf("  $ %s <commands via stdin>", lftpBin)})
 		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step,
 			Message: "  " + logScript})
 
-		cmd := exec.CommandContext(ctx, lftpBin, "-c", script)
+		cmd := exec.CommandContext(ctx, lftpBin)
+		cmd.Stdin = strings.NewReader(script + "\n")
 		if err := streamCmd(ctx, eventCh, step, cmd, false); err != nil {
 			return fmt.Errorf("lftp %s → %s: %w", pair.Src, pair.Dst, err)
 		}
@@ -129,6 +136,7 @@ func buildLFTPScript(cfg *config.Config, pair config.SyncPair) (script, logScrip
 	connect := lf.ConnectOptions
 
 	var sb strings.Builder
+	sb.WriteString("set cmd:fail-exit yes; ")
 	if connect != "" {
 		sb.WriteString(connect + "; ")
 	}
@@ -140,15 +148,29 @@ func buildLFTPScript(cfg *config.Config, pair config.SyncPair) (script, logScrip
 	srcPath := ensureTrailingSlash(pair.Src)
 	dstPath := ensureTrailingSlash(pair.Dst)
 
-	baseURL := fmt.Sprintf("%s://%s@%s:%d%s", protocol, src.User, src.Server, port, srcPath)
-	url := baseURL
-	if lf.Password != "" {
-		url = fmt.Sprintf("%s://%s:%s@%s:%d%s", protocol, src.User, lf.Password, src.Server, port, srcPath)
-	}
+	baseURL := fmt.Sprintf("%s://%s:%d", protocol, src.Server, port)
 
 	prefix := sb.String()
-	suffix := fmt.Sprintf("open %s; mirror %s . %s", url, mirrorOpts, dstPath)
-	logSuffix := fmt.Sprintf("open %s; mirror %s . %s", baseURL, mirrorOpts, dstPath)
+	var authCmd string
+	var logAuthCmd string
+	if src.User != "" || lf.Password != "" {
+		authCmd = fmt.Sprintf("user %s %s; ", shellQuote(src.User), shellQuote(lf.Password))
+		logAuthCmd = fmt.Sprintf("user %s [REDACTED]; ", shellQuote(src.User))
+	}
+	suffix := fmt.Sprintf("open %s; %scd %s; lcd %s; mirror %s . .",
+		shellQuote(baseURL),
+		authCmd,
+		shellQuote(srcPath),
+		shellQuote(dstPath),
+		mirrorOpts,
+	)
+	logSuffix := fmt.Sprintf("open %s; %scd %s; lcd %s; mirror %s . .",
+		shellQuote(baseURL),
+		logAuthCmd,
+		shellQuote(srcPath),
+		shellQuote(dstPath),
+		mirrorOpts,
+	)
 
 	return prefix + suffix, prefix + logSuffix
 }

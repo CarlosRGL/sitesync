@@ -21,7 +21,7 @@ func Run(ctx context.Context, cfg *config.Config, op Op, eventCh chan<- Event, l
 	defer close(eventCh)
 
 	tmpDir := config.TmpDir()
-	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
 		sendEvent(ctx, eventCh, Event{Type: EvStepFail, Step: 1,
 			Message: fmt.Sprintf("cannot create tmp dir: %v", err)})
 		return

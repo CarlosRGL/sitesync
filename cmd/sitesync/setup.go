@@ -72,7 +72,7 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create directory if needed
-	if err := os.MkdirAll(etcPath, 0755); err != nil {
+	if err := os.MkdirAll(etcPath, 0700); err != nil {
 		return fmt.Errorf("cannot create %s: %w", etcPath, err)
 	}
 	fmt.Printf("   %s✔%s Using %s\n\n", green, reset, etcPath)
