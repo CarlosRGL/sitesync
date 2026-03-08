@@ -11,6 +11,7 @@ import (
 
 	"github.com/carlosrgl/sitesync/internal/config"
 	"github.com/carlosrgl/sitesync/internal/logger"
+	term "github.com/charmbracelet/x/term"
 )
 
 // Run executes the full sync workflow in a goroutine, sending progress events
@@ -19,6 +20,7 @@ import (
 // Call as: go Run(ctx, cfg, op, eventCh, log)
 func Run(ctx context.Context, cfg *config.Config, op Op, eventCh chan<- Event, log logger.Logger) {
 	defer close(eventCh)
+	ctx = withAuthState(ctx)
 
 	tmpDir := config.TmpDir()
 	if err := os.MkdirAll(tmpDir, 0700); err != nil {
@@ -216,6 +218,19 @@ func RunHeadless(ctx context.Context, cfg *config.Config, op Op, log logger.Logg
 			}
 		case EvProgress:
 			fmt.Printf("\r       %3.0f%%", ev.Progress*100)
+		case EvAuthRequest:
+			if ev.AuthReplyCh != nil {
+				reply, err := promptHiddenPassword(ev.Message)
+				if err != nil {
+					lastErr = err.Error()
+					ev.AuthReplyCh <- AuthReply{Cancel: true}
+					break
+				}
+				ev.AuthReplyCh <- reply
+				if reply.Cancel {
+					lastErr = ev.Message
+				}
+			}
 		case EvLog:
 			fmt.Println("    " + ev.Message)
 		case EvDone:
@@ -226,6 +241,24 @@ func RunHeadless(ctx context.Context, cfg *config.Config, op Op, log logger.Logg
 		return fmt.Errorf("sync failed: %s", lastErr)
 	}
 	return nil
+}
+
+func promptHiddenPassword(prompt string) (AuthReply, error) {
+	fd := os.Stdin.Fd()
+	if !term.IsTerminal(fd) {
+		return AuthReply{Cancel: true}, fmt.Errorf("cannot read SSH password: stdin is not a terminal")
+	}
+
+	fmt.Printf("\n  %s (input hidden, paste supported): ", prompt)
+	password, err := term.ReadPassword(fd)
+	fmt.Println()
+	if err != nil {
+		return AuthReply{Cancel: true}, fmt.Errorf("cannot read SSH password: %w", err)
+	}
+	if len(password) == 0 {
+		return AuthReply{Cancel: true}, nil
+	}
+	return AuthReply{Password: string(password)}, nil
 }
 
 // promptErrorAction asks the user what to do after a step failure in headless mode.

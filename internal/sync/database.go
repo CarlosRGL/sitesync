@@ -33,7 +33,7 @@ func FetchDump(ctx context.Context, cfg *config.Config, dumpPath string, eventCh
 	case "remote_file":
 		sendLog(fmt.Sprintf("  source: %s@%s:%s", cfg.Source.User, cfg.Source.Server, cfg.Source.File))
 		sendLog(fmt.Sprintf("  port: %d", cfg.Source.Port))
-		err = scpFetch(ctx, cfg, dumpPath, sendLog)
+		err = scpFetch(ctx, cfg, dumpPath, eventCh, sendLog)
 
 	case "local_base":
 		sendLog(fmt.Sprintf("  source: local mysqldump → %s", cfg.Source.DBName))
@@ -42,7 +42,7 @@ func FetchDump(ctx context.Context, cfg *config.Config, dumpPath string, eventCh
 	case "remote_base":
 		sendLog(fmt.Sprintf("  source: %s@%s → %s", cfg.Source.User, cfg.Source.Server, cfg.Source.DBName))
 		sendLog(fmt.Sprintf("  host: %s  port: %d", cfg.Source.Server, cfg.Source.Port))
-		err = dumpRemoteDB(ctx, cfg, dumpPath, sendLog)
+		err = dumpRemoteDB(ctx, cfg, dumpPath, eventCh, sendLog)
 
 	default:
 		return fmt.Errorf("unknown source type %q", cfg.Source.Type)
@@ -137,16 +137,19 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-func scpFetch(ctx context.Context, cfg *config.Config, dumpPath string, log func(string)) error {
-	port := fmt.Sprintf("%d", cfg.Source.Port)
+func scpFetch(ctx context.Context, cfg *config.Config, dumpPath string, eventCh chan<- Event, log func(string)) error {
 	src := fmt.Sprintf("%s@%s:%s", cfg.Source.User, cfg.Source.Server, cfg.Source.File)
-	cmd := exec.CommandContext(ctx, "scp", "-P", port, src, dumpPath)
-	log(fmt.Sprintf("  $ scp -P %s %s %s", port, src, dumpPath))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("scp: %w\n%s", err, out)
-	}
-	return nil
+	target := fmt.Sprintf("%s@%s", cfg.Source.User, cfg.Source.Server)
+	return runSSHCommandWithPasswordPrompt(ctx, eventCh, 1, target, log, func(extraEnv []string, batchMode bool) error {
+		args := append(scpArgs(cfg.Source.Port, batchMode), src, dumpPath)
+		cmd := exec.CommandContext(ctx, "scp", args...)
+		cmd.Env = commandEnv(extraEnv)
+		log(fmt.Sprintf("  $ scp %s %s %s", strings.Join(args[:len(args)-2], " "), src, dumpPath))
+		if err := streamCmd(ctx, eventCh, 1, cmd, false); err != nil {
+			return fmt.Errorf("scp: %w", err)
+		}
+		return nil
+	})
 }
 
 func dumpLocalDB(ctx context.Context, cfg *config.Config, dumpPath string, log func(string)) error {
@@ -157,7 +160,7 @@ func dumpLocalDB(ctx context.Context, cfg *config.Config, dumpPath string, log f
 	return runDump(ctx, cfg, args, dumpPath, log)
 }
 
-func dumpRemoteDB(ctx context.Context, cfg *config.Config, dumpPath string, log func(string)) error {
+func dumpRemoteDB(ctx context.Context, cfg *config.Config, dumpPath string, eventCh chan<- Event, log func(string)) error {
 	// Build the mysqldump command to run remotely over SSH.
 	dumpBin := cfg.Source.PathToMysqldump
 	if dumpBin == "" {
@@ -175,46 +178,48 @@ func dumpRemoteDB(ctx context.Context, cfg *config.Config, dumpPath string, log 
 	}
 	remoteCmd := strings.Join(quoted, " ")
 
-	sshArgs := []string{
-		"-p", fmt.Sprintf("%d", cfg.Source.Port),
+	baseArgs := []string{
 		fmt.Sprintf("%s@%s", cfg.Source.User, cfg.Source.Server),
 		remoteCmd,
 	}
-	log(fmt.Sprintf("  $ ssh -p %d %s@%s %s %s",
-		cfg.Source.Port,
-		cfg.Source.User,
-		cfg.Source.Server,
-		dumpBin,
-		redactArgs(remoteParts[1:])))
+	target := fmt.Sprintf("%s@%s", cfg.Source.User, cfg.Source.Server)
+	return runSSHCommandWithPasswordPrompt(ctx, eventCh, 1, target, log, func(extraEnv []string, batchMode bool) error {
+		cmdArgs := append(sshArgs(cfg.Source.Port, batchMode), baseArgs...)
+		log(fmt.Sprintf("  $ ssh %s %s %s %s",
+			strings.Join(cmdArgs[:len(cmdArgs)-2], " "),
+			cfg.Source.User+"@"+cfg.Source.Server,
+			dumpBin,
+			redactArgs(remoteParts[1:])))
 
-	out, err := os.OpenFile(dumpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
-		return fmt.Errorf("create dump file: %w", err)
-	}
-	defer out.Close()
+		out, err := os.OpenFile(dumpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		if err != nil {
+			return fmt.Errorf("create dump file: %w", err)
+		}
+		defer out.Close()
 
-	cmd := exec.CommandContext(ctx, "ssh", sshArgs...)
-	cmd.Stdout = out
-	stderrPipe, _ := cmd.StderrPipe()
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("ssh start: %w", err)
-	}
+		cmd := exec.CommandContext(ctx, "ssh", cmdArgs...)
+		cmd.Env = commandEnv(extraEnv)
+		cmd.Stdout = out
+		stderrPipe, _ := cmd.StderrPipe()
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("ssh start: %w", err)
+		}
 
-	// Wait for stderr goroutine before returning to prevent log-loss race.
-	var wg sync.WaitGroup
-	if stderrPipe != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sc := bufio.NewScanner(stderrPipe)
-			for sc.Scan() {
-				log("  " + sc.Text())
-			}
-		}()
-	}
-	err = cmd.Wait()
-	wg.Wait()
-	return err
+		var wg sync.WaitGroup
+		if stderrPipe != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sc := bufio.NewScanner(stderrPipe)
+				for sc.Scan() {
+					log("  " + sc.Text())
+				}
+			}()
+		}
+		err = cmd.Wait()
+		wg.Wait()
+		return err
+	})
 }
 
 func runDump(ctx context.Context, cfg *config.Config, args []string, dumpPath string, log func(string)) error {

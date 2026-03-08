@@ -26,6 +26,9 @@ func init() {
 
 func runSetup(cmd *cobra.Command, args []string) error {
 	reader := bufio.NewReader(os.Stdin)
+	singleSiteMode := false
+	starterConfigName := ""
+	starterConfigPath := ""
 
 	cyan := "\033[36m"
 	green := "\033[32m"
@@ -75,14 +78,38 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	if err := os.MkdirAll(etcPath, 0700); err != nil {
 		return fmt.Errorf("cannot create %s: %w", etcPath, err)
 	}
+	os.Setenv("SITESYNC_ETC", etcPath)
 	fmt.Printf("   %s✔%s Using %s\n\n", green, reset, etcPath)
 
-	// ── Step 2: Shell profile ───────────────────────────────────────────────
+	// ── Step 2: Config mode ─────────────────────────────────────────────────
+	fmt.Printf("%s2)%s Config mode\n", bold, reset)
+	fmt.Printf("   Bootstrap a starter config for one site now? [y/N]: ")
+	modeInput, _ := reader.ReadString('\n')
+	modeInput = strings.TrimSpace(strings.ToLower(modeInput))
+	if modeInput == "y" || modeInput == "yes" {
+		singleSiteMode = true
+		for {
+			fmt.Printf("   Site name: ")
+			nameInput, _ := reader.ReadString('\n')
+			nameInput = strings.TrimSpace(nameInput)
+			if err := config.ValidateConfigName(nameInput); err != nil {
+				fmt.Printf("   %s⚠%s  %v\n", yellow, reset, err)
+				continue
+			}
+			starterConfigName = nameInput
+			break
+		}
+		fmt.Printf("   %s✔%s Will create a starter config for %s\n\n", green, reset, starterConfigName)
+	} else {
+		fmt.Printf("   %s✔%s Multi-site mode selected\n\n", green, reset)
+	}
+
+	// ── Step 3: Shell profile ───────────────────────────────────────────────
 	needsExport := currentEtc != etcPath
 	shellFile := detectShellProfile()
 
 	if needsExport && shellFile != "" {
-		fmt.Printf("%s2)%s Shell environment\n", bold, reset)
+		fmt.Printf("%s3)%s Shell environment\n", bold, reset)
 		exportLine := fmt.Sprintf("export SITESYNC_ETC=%q", etcPath)
 
 		// Check if already in shell file
@@ -115,21 +142,19 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		}
 
 		// Set for current process so migration works
-		os.Setenv("SITESYNC_ETC", etcPath)
 		fmt.Println()
 	} else if needsExport {
-		fmt.Printf("%s2)%s Shell environment\n", bold, reset)
+		fmt.Printf("%s3)%s Shell environment\n", bold, reset)
 		fmt.Printf("   %s⚠%s  Could not detect shell profile.\n", yellow, reset)
 		fmt.Printf("   Add this to your shell config:\n")
 		fmt.Printf("   %sexport SITESYNC_ETC=%q%s\n\n", cyan, etcPath, reset)
-		os.Setenv("SITESYNC_ETC", etcPath)
 	} else {
-		fmt.Printf("%s2)%s Shell environment\n", bold, reset)
+		fmt.Printf("%s3)%s Shell environment\n", bold, reset)
 		fmt.Printf("   %s✔%s SITESYNC_ETC already set correctly\n\n", green, reset)
 	}
 
-	// ── Step 3: Install binary ──────────────────────────────────────────────
-	fmt.Printf("%s3)%s Install binary\n", bold, reset)
+	// ── Step 4: Install binary ──────────────────────────────────────────────
+	fmt.Printf("%s4)%s Install binary\n", bold, reset)
 
 	binDir := defaultBinDir()
 	selfPath, _ := os.Executable()
@@ -203,8 +228,8 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		fmt.Printf("   %s✔%s %s is in your PATH\n\n", green, reset, binDir)
 	}
 
-	// ── Step 4: Migrate configs ─────────────────────────────────────────────
-	fmt.Printf("%s4)%s Migrate shell configs\n", bold, reset)
+	// ── Step 5: Migrate configs ─────────────────────────────────────────────
+	fmt.Printf("%s5)%s Migrate shell configs\n", bold, reset)
 
 	shellConfigs, err := config.ListShellConfigs()
 	if err != nil {
@@ -237,12 +262,45 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// ── Step 6: Starter config ──────────────────────────────────────────────
+	fmt.Printf("%s6)%s Starter config\n", bold, reset)
+	if !singleSiteMode || starterConfigName == "" {
+		fmt.Printf("   %s✔%s Skipped (multi-site mode)\n\n", green, reset)
+	} else {
+		starterConfigPath = filepath.Join(etcPath, starterConfigName, "config.toml")
+		if _, err := os.Stat(starterConfigPath); err == nil {
+			fmt.Printf("   %s⚠%s  %s already exists\n", yellow, reset, starterConfigPath)
+			fmt.Printf("   Overwrite starter config? [y/N]: ")
+			overwriteInput, _ := reader.ReadString('\n')
+			overwriteInput = strings.TrimSpace(strings.ToLower(overwriteInput))
+			if overwriteInput != "y" && overwriteInput != "yes" {
+				fmt.Printf("   %sSkipped.%s Keeping existing config\n\n", dim, reset)
+				starterConfigPath = ""
+			} else {
+				starter := config.StarterConfig(starterConfigName)
+				if err := config.Save(starterConfigName, &starter); err != nil {
+					return fmt.Errorf("cannot create starter config: %w", err)
+				}
+				fmt.Printf("   %s✔%s Wrote %s\n\n", green, reset, starterConfigPath)
+			}
+		} else {
+			starter := config.StarterConfig(starterConfigName)
+			if err := config.Save(starterConfigName, &starter); err != nil {
+				return fmt.Errorf("cannot create starter config: %w", err)
+			}
+			fmt.Printf("   %s✔%s Wrote %s\n\n", green, reset, starterConfigPath)
+		}
+	}
+
 	// ── Summary ─────────────────────────────────────────────────────────────
 	configs, _ := config.ListConfigs()
 	fmt.Printf("%s%s── Setup complete ──%s\n", bold, green, reset)
 	fmt.Printf("   Config dir:  %s\n", etcPath)
 	fmt.Printf("   Binary:      %s\n", destBin)
 	fmt.Printf("   Sites:       %d\n", len(configs))
+	if starterConfigPath != "" {
+		fmt.Printf("   Starter:     %s\n", starterConfigPath)
+	}
 	fmt.Println()
 	if needsExport && shellFile != "" {
 		fmt.Printf("   %s→ Restart your shell or run: source %s%s\n\n", yellow, filepath.Base(shellFile), reset)

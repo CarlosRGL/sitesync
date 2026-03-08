@@ -37,24 +37,34 @@ func syncRsync(ctx context.Context, cfg *config.Config, eventCh chan<- Event, st
 
 	total := len(cfg.Sync)
 	for idx, pair := range cfg.Sync {
-		args, err := buildRsyncArgs(cfg, pair)
-		if err != nil {
-			return err
-		}
-		sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step,
-			Message: fmt.Sprintf("  $ %s %s", rsyncBin, strings.Join(args, " "))})
-
-		cmd := exec.CommandContext(ctx, rsyncBin, args...)
 		baseProgress := float64(idx) / float64(total)
 		sliceSize := 1.0 / float64(total)
-		if err = streamCmdWithProgress(ctx, eventCh, step, cmd, baseProgress, sliceSize); err != nil {
-			return fmt.Errorf("rsync %s → %s: %w", pair.Src, pair.Dst, err)
+		target := fmt.Sprintf("%s@%s", cfg.Source.User, cfg.Source.Server)
+		runErr := runSSHCommandWithPasswordPrompt(ctx, eventCh, step, target, func(msg string) {
+			sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step, Message: msg})
+		}, func(extraEnv []string, batchMode bool) error {
+			currentArgs, err := buildRsyncArgs(cfg, pair, batchMode)
+			if err != nil {
+				return err
+			}
+			sendEvent(ctx, eventCh, Event{Type: EvLog, Step: step,
+				Message: fmt.Sprintf("  $ %s %s", rsyncBin, strings.Join(currentArgs, " "))})
+
+			cmd := exec.CommandContext(ctx, rsyncBin, currentArgs...)
+			cmd.Env = commandEnv(extraEnv)
+			if err := streamCmdWithProgress(ctx, eventCh, step, cmd, baseProgress, sliceSize); err != nil {
+				return fmt.Errorf("rsync %s → %s: %w", pair.Src, pair.Dst, err)
+			}
+			return nil
+		})
+		if runErr != nil {
+			return runErr
 		}
 	}
 	return nil
 }
 
-func buildRsyncArgs(cfg *config.Config, pair config.SyncPair) ([]string, error) {
+func buildRsyncArgs(cfg *config.Config, pair config.SyncPair, batchMode bool) ([]string, error) {
 	t := cfg.Transport
 	src := cfg.Source
 
@@ -68,7 +78,7 @@ func buildRsyncArgs(cfg *config.Config, pair config.SyncPair) ([]string, error) 
 	}
 
 	// SSH transport options.
-	sshOpt := fmt.Sprintf("ssh -p %d", src.Port)
+	sshOpt := rsyncSSHCommand(src.Port, batchMode)
 	args = append(args, "-e", sshOpt)
 
 	// Progress reporting.

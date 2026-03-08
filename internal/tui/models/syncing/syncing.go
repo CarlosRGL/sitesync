@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -61,6 +62,9 @@ type Model struct {
 	errorChoice int                        // 0=retry, 1=continue, 2=quit
 	replyCh     chan<- syncsvc.ErrorAction // non-nil when waiting for user choice
 	failedStep  int                        // which step failed
+	authPrompt  string
+	authInput   textinput.Model
+	authReplyCh chan<- syncsvc.AuthReply
 }
 
 func New(cfg *config.Config, op syncsvc.Op, confName string, log logger.Logger) Model {
@@ -76,6 +80,13 @@ func New(cfg *config.Config, op syncsvc.Op, confName string, log logger.Logger) 
 	vp := viewport.New(80, 10)
 	vp.Style = styles.LogPanel
 
+	authInput := textinput.New()
+	authInput.Placeholder = "paste or type password"
+	authInput.EchoMode = textinput.EchoPassword
+	authInput.EchoCharacter = '•'
+	authInput.Width = 40
+	authInput.Prompt = ""
+
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan syncsvc.Event, 128)
 
@@ -90,6 +101,7 @@ func New(cfg *config.Config, op syncsvc.Op, confName string, log logger.Logger) 
 		spinner:    sp,
 		progressBr: pr,
 		viewport:   vp,
+		authInput:  authInput,
 		logVisible: true,
 	}
 }
@@ -119,6 +131,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.viewport.Width = msg.Width - 4
+		m.authInput.Width = min(max(msg.Width-10, 20), 60)
 		logH := msg.Height - 14 // header(3) + steps(~7) + separator(1) + padding(3)
 		if logH < 4 {
 			logH = 4
@@ -127,7 +140,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncsvc.Event:
 		m = m.applyEvent(msg)
-		if !m.done && !m.failed {
+		if !m.done && !m.failed && m.authReplyCh == nil {
 			cmds = append(cmds, waitForEvent(m.eventCh))
 		}
 
@@ -142,6 +155,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case tea.KeyMsg:
+		if m.authReplyCh != nil {
+			switch msg.String() {
+			case "enter":
+				m.sendAuthReply(false)
+				cmds = append(cmds, waitForEvent(m.eventCh))
+			case "esc", "ctrl+c":
+				m.sendAuthReply(true)
+				cmds = append(cmds, waitForEvent(m.eventCh))
+			default:
+				var cmd tea.Cmd
+				m.authInput, cmd = m.authInput.Update(msg)
+				cmds = append(cmds, cmd)
+			}
+			break
+		}
+
 		// Error recovery mode: arrow keys + enter to choose
 		if m.failed && m.replyCh != nil {
 			switch msg.String() {
@@ -216,6 +245,11 @@ func (m Model) applyEvent(ev syncsvc.Event) Model {
 		if ev.ReplyCh != nil {
 			m.replyCh = ev.ReplyCh
 		}
+	case syncsvc.EvAuthRequest:
+		m.authPrompt = ev.Message
+		m.authReplyCh = ev.AuthReplyCh
+		m.authInput.SetValue("")
+		m.authInput.Focus()
 	case syncsvc.EvProgress:
 		if ev.Step >= 1 && ev.Step <= 7 {
 			m.steps[ev.Step].progress = ev.Progress
@@ -304,6 +338,21 @@ func (m *Model) sendErrorAction() {
 	m.replyCh = nil
 }
 
+func (m *Model) sendAuthReply(cancel bool) {
+	if m.authReplyCh == nil {
+		return
+	}
+	reply := syncsvc.AuthReply{Cancel: cancel}
+	if !cancel {
+		reply.Password = m.authInput.Value()
+	}
+	m.authReplyCh <- reply
+	m.authReplyCh = nil
+	m.authPrompt = ""
+	m.authInput.SetValue("")
+	m.authInput.Blur()
+}
+
 func (m Model) View() string {
 	var rows []string
 
@@ -319,6 +368,13 @@ func (m Model) View() string {
 	rows = append(rows, "")
 
 	// ── Status ──────────────────────────────────────────
+	if m.authReplyCh != nil {
+		rows = append(rows, styles.Warning.Render("  🔐 "+m.authPrompt))
+		rows = append(rows, "  "+m.authInput.View())
+		rows = append(rows, styles.Muted.Render("  Paste is supported. Press enter to submit or esc to cancel."))
+		rows = append(rows, "")
+	}
+
 	if m.failed {
 		rows = append(rows, styles.Error.Render("  ✘ "+m.failMsg))
 		if m.replyCh != nil {
@@ -360,7 +416,9 @@ func (m Model) View() string {
 
 	// ── Help ────────────────────────────────────────────
 	var helpPairs []string
-	if m.failed && m.replyCh != nil {
+	if m.authReplyCh != nil {
+		helpPairs = append(helpPairs, "enter", "submit", "esc", "cancel")
+	} else if m.failed && m.replyCh != nil {
 		helpPairs = append(helpPairs, "←/→", "select", "enter", "confirm", "r", "retry", "c", "continue", "q", "quit")
 	} else {
 		helpPairs = append(helpPairs, "l", "toggle log")

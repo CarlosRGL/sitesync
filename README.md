@@ -14,6 +14,12 @@ Pull a remote website to your local development environment — database, files,
   └─────────────────────────────────────┘
 ```
 
+### ✨ What's New
+
+**Single-site Bootstrap** — The installer and setup wizard now offer a quick-start mode for users who only need one sync target. It creates a pre-filled config with sensible defaults based on your site name.
+
+**Interactive SSH Password Support** — No SSH keys? No problem. sitesync now prompts for SSH passwords when needed, with masked input and paste support in both TUI and headless modes.
+
 ---
 
 ## What it does
@@ -66,13 +72,29 @@ curl -fsSL https://github.com/CarlosRGL/sitesync/releases/latest/download/instal
 
 This auto-detects your OS (macOS / Linux) and architecture (amd64 / arm64), downloads the correct binary, and installs it to `~/bin`. If no pre-built binary is available, it falls back to building from source (requires Go).
 
-Then run the interactive setup:
+**Interactive bootstrap**: If you're installing from a terminal (not piping from a script), the installer will offer to create your first site config:
+
+```
+✓ Binary installed to ~/bin/sitesync
+→ Would you like to create a starter config? (y/n)
+→ Site name: mysite
+✓ Config created at ~/.config/sitesync/mysite/config.toml
+```
+
+Then run the interactive setup to finalize environment setup:
 
 ```bash
 sitesync setup
 ```
 
-The setup wizard defaults the config directory to `~/.config/sitesync` — a clean XDG-compliant location that works well on both desktops and servers.
+The setup wizard walks you through:
+
+1. Setting the config directory (`SITESYNC_ETC`)
+2. Choosing **single-site** (one config with defaults) or **multi-site** (empty setup for multiple sites)
+3. Adding the env variable to your shell profile (`.zshrc`, `.bashrc`, etc.)
+4. Installing the binary to `~/bin` (or a custom path)
+5. Migrating any existing shell configs to TOML
+6. Creating a starter config when single-site mode is selected
 
 ### Build from source
 
@@ -83,19 +105,14 @@ make install          # builds and copies to ~/bin/sitesync
 sitesync setup        # interactive environment setup
 ```
 
+The `setup` command is the same interactive wizard as described above, with single-site and multi-site options.
+
 ### Cross-compile release binaries
 
 ```bash
 make release publish  # builds for darwin/amd64, darwin/arm64, linux/amd64, linux/arm64
                       # and uploads to GitHub releases
 ```
-
-The `setup` command walks you through:
-
-1. Setting the config directory (`SITESYNC_ETC`)
-2. Adding the env variable to your shell profile
-3. Installing the binary to `~/bin` (or a custom path)
-4. Migrating any existing shell configs to TOML
 
 ### Update
 
@@ -105,7 +122,7 @@ Just re-run the install script or `git pull && make install`. Configs are never 
 
 ```bash
 sitesync version
-# sitesync 3.3.3
+# sitesync 3.4.0
 ```
 
 ---
@@ -113,6 +130,28 @@ sitesync version
 ## Quick start
 
 ### 1. Create a config
+
+**Option A: Single-site bootstrap (easiest)**
+
+If you only need to sync one site, the installer and setup wizard can create a starter config for you:
+
+```bash
+# During installation:
+curl -fsSL https://github.com/CarlosRGL/sitesync/releases/latest/download/install.sh | sh
+# Follow the prompts to create your first site config
+
+# Or after installation:
+sitesync setup
+# Choose "single-site" mode when prompted
+```
+
+The wizard will:
+
+- Create `~/.config/sitesync/{name}/config.toml` with sensible defaults
+- Pre-fill database names, URL replacements, and sync paths based on your site name
+- Set `SITESYNC_ETC` in your shell profile
+
+**Option B: Manual config creation**
 
 Use the TUI editor (press `n` in the picker) or create one manually:
 
@@ -123,13 +162,24 @@ cp sample/config.toml $SITESYNC_ETC/mysite/config.toml
 
 Edit `config.toml` with your remote server details, DB credentials, and find/replace pairs.
 
-### 2. Set up SSH key auth (recommended)
+### 2. Set up SSH authentication
+
+**Option A: SSH key auth (recommended)**
 
 ```bash
 ssh-copy-id user@your-server.com
 ```
 
-This avoids password prompts during sync.
+This provides password-less authentication and is the most secure method.
+
+**Option B: Interactive password prompts**
+
+If SSH key auth is not available, sitesync will prompt for your SSH password when needed:
+
+- **TUI mode**: A masked input field appears at the bottom of the sync screen. Type or paste your password and press enter.
+- **Headless mode** (`--no-tui`): Password is requested via terminal with hidden input (characters not echoed).
+
+The password is cached for the duration of the sync, so you only enter it once even if multiple SSH commands are executed.
 
 ### 3. Run the TUI
 

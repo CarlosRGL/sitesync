@@ -17,9 +17,17 @@ const (
 	EvLog
 	// EvProgress is a progress update (Progress field is 0.0–1.0).
 	EvProgress
+	// EvAuthRequest asks the consumer to collect a password and reply.
+	EvAuthRequest
 	// EvDone signals that the entire sync run has finished.
 	EvDone
 )
+
+// AuthReply carries the result of an interactive password prompt.
+type AuthReply struct {
+	Password string
+	Cancel   bool
+}
 
 // ErrorAction tells the engine what to do after a step failure.
 type ErrorAction uint8
@@ -40,6 +48,10 @@ type Event struct {
 	// ReplyCh is set on EvStepFail events. The consumer must send exactly
 	// one ErrorAction to tell the engine how to proceed.
 	ReplyCh chan<- ErrorAction
+
+	// AuthReplyCh is set on EvAuthRequest events. The consumer must send
+	// exactly one AuthReply containing either a password or a cancel signal.
+	AuthReplyCh chan<- AuthReply
 }
 
 // Op describes which parts of the sync to run.

@@ -102,6 +102,11 @@ func validateConfigName(name string) error {
 	return nil
 }
 
+// ValidateConfigName checks whether a config name can be used as etc/{name}/config.toml.
+func ValidateConfigName(name string) error {
+	return validateConfigName(name)
+}
+
 // Load reads the named config from etc/{name}/config.toml.
 func Load(name string) (*Config, error) {
 	if err := validateConfigName(name); err != nil {
